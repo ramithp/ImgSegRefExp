@@ -1,4 +1,3 @@
-
 import sys
 import os
 import skimage.io
@@ -11,7 +10,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import scipy.io as sio
-from util import text_processing, im_processing
+from utils import text_processing, im_processing
+
 ################################################################################
 # Parameters
 ################################################################################
@@ -37,14 +37,15 @@ embed_dim = 1000
 lstm_dim = 1000
 mlp_hidden_dims = 500
 
+root = '/Users/shubhammehrotra/text_objseg/exp-referit/'
 
-image_dir = './exp-referit/referit-dataset/images/'
-mask_dir = './exp-referit/referit-dataset/mask/'
-query_file = './exp-referit/data/referit_query_test.json'
-bbox_file = './exp-referit/data/referit_bbox.json'
-imcrop_file = './exp-referit/data/referit_imcrop.json'
-imsize_file = './exp-referit/data/referit_imsize.json'
-vocab_file = './exp-referit/data/vocabulary_referit.txt'
+image_dir = root + 'referit-dataset/images/'
+mask_dir = root + 'referit-dataset/mask/'
+query_file = root + 'data/referit_query_test.json'
+bbox_file = root + 'data/referit_bbox.json'
+imcrop_file = root + 'data/referit_imcrop.json'
+imsize_file = root + 'data/referit_imsize.json'
+vocab_file = root + 'data/vocabulary_referit.txt'
 
 
 query_dict = json.load(open(query_file))
@@ -105,7 +106,7 @@ class ImageSegmentationDataset(Dataset):
             processed_im = np.tile(processed_im[:, :, np.newaxis], (1, 1, 3))
         processed_im = transforms.ToTensor()(processed_im)
 
-        if (not self.test_flag)
+        if (not self.test_flag):
             mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
             mask = load_mask(mask_file_name).astype(np.float32)
             processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
@@ -115,7 +116,7 @@ class ImageSegmentationDataset(Dataset):
 
 
 train_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir)
-train_loader = DataLoader(train_dataset, batch_size = 200, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size = 2, shuffle=True)
 
 test_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir, test = True)
 test_loader = DataLoader(test_dataset, batch_size = 200)
