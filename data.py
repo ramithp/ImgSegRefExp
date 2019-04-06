@@ -16,17 +16,6 @@ from util import text_processing, im_processing
 # Parameters
 ################################################################################
 
-image_dir = './exp-referit/referit-dataset/images/'
-mask_dir = './exp-referit/referit-dataset/mask/'
-query_file = './exp-referit/data/referit_query_test.json'
-bbox_file = './exp-referit/data/referit_bbox.json'
-imcrop_file = './exp-referit/data/referit_imcrop.json'
-imsize_file = './exp-referit/data/referit_imsize.json'
-vocab_file = './exp-referit/data/vocabulary_referit.txt'
-
-pretrained_model = './exp-referit/tfmodel/referit_fc8_seg_highres_iter_18000.tfmodel'
-
-# Model Param
 T = 20
 N = 1
 input_H = 512; featmap_H = (input_H // 32)
