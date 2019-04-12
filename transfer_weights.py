@@ -64,6 +64,24 @@ weights_dict = OrderedDict()
 for s in sv:
     weights_dict[s.name] = torch.from_numpy(sess.run(s))
     
+def tf_lstm_to_pt(tf_weight, tf_bias, input_size, hidden_size, alpha=0.5):
+    rows, cols = tf_weight.shape
+    assert rows == input_size + hidden_size
+    input_weights = tf_weight[:input_size, :] # inp_size x 4*hidden_size
+    hidden_weights = tf_weight[input_size:, :]
+    input_bias = tf_bias.view(4, hidden_size)
+    input_bias = input_bias[[0,2,1,3],:]
+    input_bias = input_bias.view(4*hidden_size)
+    hidden_bias = alpha * input_bias
+    input_bias = (1- alpha) * input_bias
+    input_weights = input_weights.t()
+    input_weights = input_weights.view(4, hidden_size, input_size)
+    input_weights = input_weights[[0,2,1,3], :,:]
+    input_weights = input_weights.view(4*hidden_size, input_size)
+    hidden_weights = hidden_weights.t().view(4, hidden_size, hidden_size)[[0,2,1,3], :,:].view(4*hidden_size, hidden_size)
+    return input_weights, hidden_weights, input_bias, hidden_bias
+    # reordered weights from i,g,f,o to i,f,g,o
+    
 weights = OrderedDict()
 weights['features.0.weight'] = weights_dict['vgg_local/conv1_1/weights:0'].permute(3,2,0,1)
 weights['features.0.bias'] = weights_dict['vgg_local/conv1_1/biases:0']
@@ -97,5 +115,15 @@ weights['classifier.3.weight'] = weights_dict['vgg_local/fc7/weights:0'].permute
 weights['classifier.3.bias'] = weights_dict['vgg_local/fc7/biases:0']
 weights['classifier.6.weight'] = weights_dict['vgg_local/fc8/weights:0'].permute(3,2,0,1).squeeze(3).squeeze(2)
 weights['classifier.6.bias'] = weights_dict['vgg_local/fc8/biases:0'] 
+weights['embedding.weight'] = weights_dict['word_embedding/embedding:0']
+
+tf_weight = weights_dict['lstm_lang/rnn/multi_rnn_cell/cell_0/basic_lstm_cell/kernel:0'] 
+tf_bias = weights_dict['lstm_lang/rnn/multi_rnn_cell/cell_0/basic_lstm_cell/bias:0']
+input_weights, hidden_weights, input_bias, hidden_bias = tf_lstm_to_pt(tf_weight, tf_bias, 1000, 1000, alpha=0.5)
+weights['lstm.weight_ih_l0'] = input_weights
+weights['lstm.weight_hh_l0'] = hidden_weights
+weights['lstm.bias_ih_l0'] = input_bias 
+weights['lstm.bias_hh_l0'] = hidden_bias
+
 
 torch.save(weights, "text_objseg_pretrained_torch_converted")
