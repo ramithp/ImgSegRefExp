@@ -7,7 +7,7 @@ import tensorflow as tf
 import json
 import timeit
 import matplotlib.pyplot as plt
-%matplotlib inline
+
 sys.path.append('../')
 
 from models import text_objseg_model as segmodel
