@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
+import numpy as np
 
 def init_weights(m):
     if type(m) == nn.Conv2d :
@@ -25,18 +26,17 @@ def init_weights(m):
                 torch.nn.init.constant_(param, 0.0)
 
 
-def conv_relu(kernel_size, stride, in_channels, out_channels, bias=True):
+def conv_relu(kernel_size, stride, in_channels, out_channels, padding=0, bias=True):
     #TODO: weight init
-    layer = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=0, bias=bias),
+    layer = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias),
                       nn.ReLU(inplace=True))
     return layer
 
-def conv(kernel_size, stride, in_channels, out_channels, bias=True):
+def conv(kernel_size, stride, in_channels, out_channels, padding=0, bias=True):
     #TODO: weight init
-    layer = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=0, bias=bias)
+    layer = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
     return layer
-
-
+    
 def generate_spatial_batch(N, featmap_H, featmap_W):
     spatial_batch_val = np.zeros((N, featmap_H, featmap_W, 8), dtype=np.float32)
     for h in range(featmap_H):
@@ -51,6 +51,7 @@ def generate_spatial_batch(N, featmap_H, featmap_W):
                 [xmin, ymin, xmax, ymax, xctr, yctr, 1/featmap_W, 1/featmap_H]
     return torch.Tensor(spatial_batch_val)
 
+
 class LanguageModule(nn.Module):
     def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
         super(LanguageModule, self).__init__()
@@ -64,36 +65,30 @@ class LanguageModule(nn.Module):
         self.lstm = nn.LSTM(input_size=emb_size,
                         hidden_size=hidden_size,
                         num_layers=num_lstm_layers,
-                        bidirectional=False)
+                        bidirectional=False, batch_first=True)
 
     def forward(self, input_seq):
-        # Incoming is a bs x seq_len
+        # Incoming is a bsz x seq_len
         # Assumes already padded
         bsz = len(input_seq)
-        max_seq_len =len(input_seq[0])
+        max_seq_len = len(input_seq[0])
         in_lens = [len(seq) for seq in input_seq]
 
         # Pad to bs x max_seq_len
-        padded_seqs = rnn_utils.pad_sequence(input_seq)
-        padded_seqs = padded_seqs
+        padded_seqs = rnn_utils.pad_sequence(input_seq, batch_first=True)
 
         # Retrieve embeddings it into bsz x seq_len x embedding_size; including for <pad> tokens
         embedded_seqs = self.embedding(input_seq)
         
         # Goes in as bsz x seq_len x embedding_dim
-        # Comes out of this as seq_len x bsz x embedding_dim
-        packed_seqs = rnn_utils.pack_padded_sequence(embedded_seqs, lengths=in_lens)
+        # Comes out of this as bsz x seq_len x embedding_dim
+        packed_seqs = rnn_utils.pack_padded_sequence(embedded_seqs, lengths=in_lens, batch_first=True)
 
-        # TODO: do something better than this
         hidden = None # internally sets to 0 vector embeddings
-        output_packed, hidden = self.lstm (packed_seqs, hidden)
-
-        # Unpack sequence to padded level to use in linear layer
-        # Comes out as seq_len x bsz x hidden_dim, because we used batch_first=True
-        output_padded, _ = rnn_utils.pad_packed_sequence(output_packed)
-
+        output_packed, (hidden, _) = self.lstm(packed_seqs, hidden)
+        
         # Output is now seq_len x bsz x hidden_dim
-        return output_padded
+        return hidden[-1]
 
 class ImageModule(nn.Module):
 
@@ -104,9 +99,12 @@ class ImageModule(nn.Module):
         # Freeze VGG weights for all layers except FC layers
         self.feature_extractor = models.vgg16(pretrained=True)
         self.feature_extractor = self.feature_extractor.features
-
-        vgg_fc7_full_conv = nn.Sequential(conv_relu(kernel_size=7, stride=1, in_channels=512, out_channels=4096),
+        
+        # Padding is 3x3 because after VGG16 layers, we get a 16x16 feature map. k=7 needs 5 to get "SAME" padding
+        vgg_fc7_full_conv = nn.Sequential(conv_relu(kernel_size=7, stride=1, in_channels=512, out_channels=4096, padding=(3, 3)),
                                   conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
+
+        # Padding not needed. Just a 1x1
         vgg_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=4096, out_channels=1000)
 
         self.feature_extractor.add_module("vgg_fc7_full_conv", vgg_fc7_full_conv)
@@ -119,14 +117,16 @@ class ImageModule(nn.Module):
         #         param.requires_grad = False
 
     def forward(self, inputs):
-        return self.feature_extractor(inputs)
+        x  = self.feature_extractor(inputs)
+        print(x.shape)
+        return x
 
 
 class DeconvLayer(nn.Module):
     def __init__(self, kernel_size, stride, output_dim, bias=False):
         super(DeconvLayer, self).__init__()
         self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
-                                        stride=stride, bias=bias, padding=0)
+                                        stride=stride, bias=bias, padding=16)
         
     def forward(self, inp):
 #         batch_size, input_dim, input_height, input_width = inp.shape
@@ -148,7 +148,7 @@ class ImgSegRefExpModel(nn.Module):
 
         self.img_features = ImageModule()
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000, out_channels=mlp_hidden, bias=False)
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000+lstm_hidden_size+8, out_channels=mlp_hidden, bias=False)
         self.mlp2 = conv_relu(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1, bias=False)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
@@ -162,25 +162,27 @@ class ImgSegRefExpModel(nn.Module):
 
         # N C H W format
         featmap_H, featmap_W = img_out.size(2), img_out.size(3)
-
+        print(featmap_H, featmap_W)
         # bsz x hidden_dim
         N, D_text = text_out.size(0), text_out.size(1)
 
         # Tile the textual features with the image feature-maps
         text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)        
-        
-        # Generate spatial features to learn co-ordinates
-        spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W)
 
+        # Generate spatial features to learn co-ordinates
+        spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
+        
         # Concat 3 sources of inputs
         # Output is of shape N x (D_text + D_img + D_spatial) x H x W
-        concat_out = torch.cat([torch.norm(text_out, dim=1),
-                             torch.norm(img_out, dim=1),
-                             spatial_batch], dim=1)
+        concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
+                             F.normalize(img_out, p=2, dim=1),
+                             spatial_feats], dim=1)
 
         mlp_out = self.mlp1(concat_out)
         mlp_out = self.mlp2(mlp_out)
+        
+        print(mlp_out.shape)
 
         generated_mask = self.deconv(mlp_out)
 
-        return generated_mask
+        return generated_mask                
