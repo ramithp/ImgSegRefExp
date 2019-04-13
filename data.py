@@ -78,6 +78,7 @@ def load_mask(mask_path):
 class ImageSegmentationDataset(Dataset):
 
     def __init__(self, query_file, root_directory_image, root_directory_mask, test = False, transform = None):
+        
         self.root_directory_image = root_directory_image
         self.root_directory_mask = root_directory_mask
         self.query_file = query_file
@@ -100,27 +101,31 @@ class ImageSegmentationDataset(Dataset):
         current_img_crop = int(current_img_name.split("_")[1])
         current_img_text = int(current_img_name.split("_")[2])
         img_text = self.query_dict["{}_{}".format(current_img_main,current_img_crop)][current_img_text]
+        text_seq_val = np.zeros((T, N), dtype=np.float32)
         image = skimage.io.imread(image_dir + imname)
         processed_im = skimage.img_as_ubyte(im_processing.resize_and_pad(image, input_H, input_W))
+        text_seq_val[:, 0] = text_processing.preprocess_sentence(img_text, vocab_dict, T)
         if processed_im.ndim == 2:
             processed_im = np.tile(processed_im[:, :, np.newaxis], (1, 1, 3))
         processed_im = transforms.ToTensor()(processed_im)
-
+        
+        print (img_text)
         if (not self.test_flag):
             mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
             mask = load_mask(mask_file_name).astype(np.float32)
             processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
-            return processed_im, img_text, processed_mask
+            return processed_im, text_seq_val[:, 0], processed_mask
         
-        return processed_im, img_text
+        return processed_im, text_seq_val[:, 0]
 
 
 train_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir)
-train_loader = DataLoader(train_dataset, batch_size = 2, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
 test_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir, test = True)
-test_loader = DataLoader(test_dataset, batch_size = 200)
+test_loader = DataLoader(test_dataset, batch_size=200)
 
 for batch_idx, (image, text, mask) in enumerate(train_loader):
     print (batch_idx, image.shape)
+    print (text.shape)
     break
