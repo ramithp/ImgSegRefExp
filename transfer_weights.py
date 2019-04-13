@@ -125,5 +125,11 @@ weights['lstm.weight_hh_l0'] = hidden_weights
 weights['lstm.bias_ih_l0'] = input_bias 
 weights['lstm.bias_hh_l0'] = hidden_bias
 
+weights['mlp.0.weight'] = weights_dict['classifier/mlp_l1/weights:0'].permute(3,2,0,1)
+weights['mlp.0.bias'] = weights_dict['classifier/mlp_l1/biases:0']
+weights['mlp.1.weight'] = weights_dict['classifier/mlp_l2/weights:0'].permute(3,2,0,1)
+weights['mlp.1.bias'] = weights_dict['classifier/mlp_l2/biases:0']
+
+weights['dconv.weight'] = weights_dict['classifier/upsample32s/weights:0'].permute(3,2,0,1)
 
 torch.save(weights, "text_objseg_pretrained_torch_converted")
