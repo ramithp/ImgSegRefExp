@@ -1,0 +1,2 @@
+torch>=0.4
+torchtext>=0.3

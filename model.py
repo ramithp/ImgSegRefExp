@@ -1,4 +1,3 @@
-    
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,32 +24,47 @@ def init_weights(m):
                 print("bias init", name)
                 torch.nn.init.constant_(param, 0.0)
 
-class LSTMLayer(nn.Module):
-    def __init__(self, vocab_size, emb_size, pretrained_path, num_lstm_layers):
-        super(PhonemePredictor, self).__init__()
+
+def conv_relu(kernel_size, stride, in_channels, out_channels, bias=True):
+    #TODO: weight init
+    layer = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=0, bias=bias),
+                      nn.ReLU(inplace=True))
+    return layer
+
+def conv(kernel_size, stride, in_channels, out_channels, bias=True):
+    #TODO: weight init
+    layer = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=0, bias=bias)
+    return layer
 
 
-    # embedding matrix with each row containing the embedding vector of a word
-    # this has to be done on CPU currently
-    with tf.variable_scope('word_embedding'), tf.device("/cpu:0"):
-        embedding_mat = tf.get_variable("embedding", [num_vocab, embed_dim])
-        # text_seq has shape [T, N] and embedded_seq has shape [T, N, D].
-        embedded_seq = tf.nn.embedding_lookup(embedding_mat, text_seq_batch)
+def generate_spatial_batch(N, featmap_H, featmap_W):
+    spatial_batch_val = np.zeros((N, featmap_H, featmap_W, 8), dtype=np.float32)
+    for h in range(featmap_H):
+        for w in range(featmap_W):
+            xmin = w / featmap_W * 2 - 1
+            xmax = (w+1) / featmap_W * 2 - 1
+            xctr = (xmin+xmax) / 2
+            ymin = h / featmap_H * 2 - 1
+            ymax = (h+1) / featmap_H * 2 - 1
+            yctr = (ymin+ymax) / 2
+            spatial_batch_val[:, h, w, :] = \
+                [xmin, ymin, xmax, ymax, xctr, yctr, 1/featmap_W, 1/featmap_H]
+    return torch.Tensor(spatial_batch_val)
 
-        lstm_top = lstm('lstm_lang', embedded_seq, None, output_dim=lstm_dim,
-                    num_layers=1, forget_bias=1.0, apply_dropout=False,
-                    concat_output=False)[-1]
+class LanguageModule(nn.Module):
+    def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
+        super(LanguageModule, self).__init__()
 
-    # TODO: need implementation for similar function
-    self.embedding = nn.Embedding(vocab_size, emb_size, padding_idx=??)
-    data.load_pretrained_embedding(self.embedding, pretrained_path)
+        # TODO: need implementation for similar function
+        # TODO: padding index
+        self.embedding = nn.Embedding(vocab_size, emb_size) #, padding_idx=??)
 
-    # TODO init bias as 1: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/models/lstm_net.py#L16
-    # Not bi: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/util/rnn.py#L57
-    self.lstm = nn.LSTM(input_size=emb_size,
-                    hidden_size=self.hidden_size,
-                    num_layers=num_lstm_layers,
-                    bidirectional=False)
+        # TODO init bias as 1: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/models/lstm_net.py#L16
+        # Not bi: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/util/rnn.py#L57
+        self.lstm = nn.LSTM(input_size=emb_size,
+                        hidden_size=hidden_size,
+                        num_layers=num_lstm_layers,
+                        bidirectional=False)
 
     def forward(self, input_seq):
         # Incoming is a bs x seq_len
@@ -81,64 +95,92 @@ class LSTMLayer(nn.Module):
         # Output is now seq_len x bsz x hidden_dim
         return output_padded
 
-class CNNLayer(nn.Module):
-
-    @staticmethod
-    def conv_1x1_bn_relu(inp, oup):
-        return nn.Sequential(
-            nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(oup),
-            nn.ReLU6(inplace=True))
-
-    @staticmethod
-    def conv_1x1_relu(inp, oup):
-        return nn.Sequential(
-            nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(oup),
-            nn.ReLU6(inplace=True))
+class ImageModule(nn.Module):
 
 
-    def conv_relu_layer(bottom, kernel_size, stride, output_dim, padding='SAME',
-                    bias_term=True, weights_initializer=None, biases_initializer=None):
-    conv = conv_layer(name, bottom, kernel_size, stride, output_dim, padding,
-                      bias_term, weights_initializer, biases_initializer)
-    relu = tf.nn.relu(conv)
-    return relu
-
-
-    def __init__(self, pretrained_wt_path):
-        super(CNNLayer, self).__init__()
+    def __init__(self):
+        super(ImageModule, self).__init__()
 
         # Freeze VGG weights for all layers except FC layers
-        vgg16 = models.vgg16(pretrained=True)
+        self.feature_extractor = models.vgg16(pretrained=True)
+        self.feature_extractor = self.feature_extractor.features
 
-        for name, param in vgg16.named_parameters():
-            # Last FC is set up for weight load
-            if 'classifier' not in name:
-                param.requires_grad = False
+        vgg_fc7_full_conv = nn.Sequential(conv_relu(kernel_size=7, stride=1, in_channels=512, out_channels=4096),
+                                  conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
+        vgg_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=4096, out_channels=1000)
 
-        # TODO weight load function
-        data_utils.load_vgg16_fc(vgg16, pretrained_wt_path)
+        self.feature_extractor.add_module("vgg_fc7_full_conv", vgg_fc7_full_conv)
+        self.feature_extractor.add_module("vgg_fc8_full_conv", vgg_fc8_full_conv)
 
-    def forward(self, seq_batch):
-        return outputs
+        # Optionally switch off fine-tune
+        # for name, param in vgg16.named_parameters():
+        #     # Last FC is set up for weight load
+        #     if 'classifier' not in name:
+        #         param.requires_grad = False
+
+    def forward(self, inputs):
+        return self.feature_extractor(inputs)
+
+
+class DeconvLayer(nn.Module):
+    def __init__(self, kernel_size, stride, output_dim, bias=False):
+        super(DeconvLayer, self).__init__()
+        self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
+                                        stride=stride, bias=bias, padding=0)
+        
+    def forward(self, inp):
+#         batch_size, input_dim, input_height, input_width = inp.shape
+        return self.dconv(inp)
+    
+    def init_weights(self):
+        for name, param in self.named_parameters():
+            if 'bias' in name:
+                nn.init.constant_(param, 0.0)
+            elif 'weight' in name:
+                nn.init.xavier_normal_(param)
+#                 nn.init.normal_(param)
+
 
 class ImgSegRefExpModel(nn.Module):
-    def __init__(self):
+    def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
         super(ImgSegRefExpModel, self).__init__()
-        self.lstm = LSTMLayer(
-            vocab_size=,
-            emb_size=, 
-            pretrained_path=, 
-            num_lstm_layers=1)
+        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1, hidden_size=lstm_hidden_size)
 
-        self.cnn = CNNLayer(pretrained_wt_path=)
+        self.img_features = ImageModule()
 
-        # TODO
-        self.mlp = ???
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000, out_channels=mlp_hidden, bias=False)
+        self.mlp2 = conv_relu(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1, bias=False)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
-        self.deconv = ??? 
+        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
 
-    def forward(self, seq_batch):
-        return seq_batch
+    def forward(self, inputs):
+        img_input, text_input = inputs
+
+        img_out = self.img_features(img_input)
+        text_out = self.text_features(text_input)
+
+        # N C H W format
+        featmap_H, featmap_W = img_out.size(2), img_out.size(3)
+
+        # bsz x hidden_dim
+        N, D_text = text_out.size(0), text_out.size(1)
+
+        # Tile the textual features with the image feature-maps
+        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)        
+        
+        # Generate spatial features to learn co-ordinates
+        spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W)
+
+        # Concat 3 sources of inputs
+        # Output is of shape N x (D_text + D_img + D_spatial) x H x W
+        concat_out = torch.cat([torch.norm(text_out, dim=1),
+                             torch.norm(img_out, dim=1),
+                             spatial_batch], dim=1)
+
+        mlp_out = self.mlp1(concat_out)
+        mlp_out = self.mlp2(mlp_out)
+
+        generated_mask = self.deconv(mlp_out)
+
+        return generated_mask
