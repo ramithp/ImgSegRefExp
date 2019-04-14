@@ -131,15 +131,6 @@ class DeconvLayer(nn.Module):
     def forward(self, inp):
 #         batch_size, input_dim, input_height, input_width = inp.shape
         return self.dconv(inp)
-    
-    def init_weights(self):
-        for name, param in self.named_parameters():
-            if 'bias' in name:
-                nn.init.constant_(param, 0.0)
-            elif 'weight' in name:
-                nn.init.xavier_normal_(param)
-#                 nn.init.normal_(param)
-
 
 class ImgSegRefExpModel(nn.Module):
     def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
@@ -148,8 +139,8 @@ class ImgSegRefExpModel(nn.Module):
 
         self.img_features = ImageModule()
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000+lstm_hidden_size+8, out_channels=mlp_hidden, bias=False)
-        self.mlp2 = conv_relu(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1, bias=False)
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000+lstm_hidden_size+8, out_channels=mlp_hidden)
+        self.mlp2 = conv_relu(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
