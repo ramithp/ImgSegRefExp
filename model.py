@@ -56,12 +56,11 @@ class LanguageModule(nn.Module):
     def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
         super(LanguageModule, self).__init__()
 
-        # TODO: need implementation for similar function
         # TODO: padding index
         self.embedding = nn.Embedding(vocab_size, emb_size) #, padding_idx=??)
 
         # TODO init bias as 1: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/models/lstm_net.py#L16
-        # Not bi: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/util/rnn.py#L57
+        # Not a bi-LSTM: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/util/rnn.py#L57
         self.lstm = nn.LSTM(input_size=emb_size,
                         hidden_size=hidden_size,
                         num_layers=num_lstm_layers,
@@ -110,12 +109,6 @@ class ImageModule(nn.Module):
         self.feature_extractor.add_module("vgg_fc7_full_conv", vgg_fc7_full_conv)
         self.feature_extractor.add_module("vgg_fc8_full_conv", vgg_fc8_full_conv)
 
-        # Optionally switch off fine-tune
-        # for name, param in vgg16.named_parameters():
-        #     # Last FC is set up for weight load
-        #     if 'classifier' not in name:
-        #         param.requires_grad = False
-
     def forward(self, inputs):
         x  = self.feature_extractor(inputs)
         print(x.shape)
@@ -129,7 +122,7 @@ class DeconvLayer(nn.Module):
                                         stride=stride, bias=bias, padding=16)
         
     def forward(self, inp):
-#         batch_size, input_dim, input_height, input_width = inp.shape
+        # batch_size, input_dim, input_height, input_width = inp.shape
         return self.dconv(inp)
 
 class ImgSegRefExpModel(nn.Module):
@@ -139,8 +132,8 @@ class ImgSegRefExpModel(nn.Module):
 
         self.img_features = ImageModule()
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000+lstm_hidden_size+8, out_channels=mlp_hidden)
-        self.mlp2 = conv_relu(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1)
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=mlp_hidden)
+        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
@@ -169,11 +162,11 @@ class ImgSegRefExpModel(nn.Module):
                              F.normalize(img_out, p=2, dim=1),
                              spatial_feats], dim=1)
 
+        # Series of linear layers to reduce dimensions
         mlp_out = self.mlp1(concat_out)
         mlp_out = self.mlp2(mlp_out)
         
-        print(mlp_out.shape)
-
+        # Final deconvolution to get the upsampled mask
         generated_mask = self.deconv(mlp_out)
 
         return generated_mask                
