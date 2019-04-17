@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import scipy.io as sio
-from utils import text_processing, im_processing
+from utl import text_processing, im_processing
 
 ################################################################################
 # Parameters
@@ -102,30 +102,35 @@ class ImageSegmentationDataset(Dataset):
         current_img_text = int(current_img_name.split("_")[2])
         img_text = self.query_dict["{}_{}".format(current_img_main,current_img_crop)][current_img_text]
         text_seq_val = np.zeros((T, N), dtype=np.float32)
-        image = skimage.io.imread(image_dir + imname)
+        char = [int(i) for i in str(current_img_main)]
+        original_image = torch.from_numpy(np.array(char))
+        image = skimage.io.imread(image_dir + str(current_img_main) + '.jpg')
+        #print (current_img_main)
+        print ('Image Name', image_dir + str(current_img_main))
         processed_im = skimage.img_as_ubyte(im_processing.resize_and_pad(image, input_H, input_W))
         text_seq_val[:, 0] = text_processing.preprocess_sentence(img_text, vocab_dict, T)
         if processed_im.ndim == 2:
             processed_im = np.tile(processed_im[:, :, np.newaxis], (1, 1, 3))
         processed_im = transforms.ToTensor()(processed_im)
-        
-        print (img_text)
+        #original_image = transforms.ToTensor()(image)
+        print ('Image Text', img_text)
         if (not self.test_flag):
             mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
             mask = load_mask(mask_file_name).astype(np.float32)
-            processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
-            return processed_im, text_seq_val[:, 0], processed_mask
+            #processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
+            return processed_im, text_seq_val[:, 0], mask, original_image
         
         return processed_im, text_seq_val[:, 0]
 
 
 train_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir)
-train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
 test_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir, test = True)
 test_loader = DataLoader(test_dataset, batch_size=200)
 
-for batch_idx, (image, text, mask) in enumerate(train_loader):
-    print (batch_idx, image.shape)
-    print (text.shape)
-    break
+# for batch_idx, (image, text, mask, original_image) in enumerate(train_loader):
+#     print (batch_idx, image.shape)
+#     print (text.shape)
+#     print (original_image)
+#     break
