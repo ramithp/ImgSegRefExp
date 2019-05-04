@@ -1,6 +1,7 @@
 ./data/*
 ./demo/*.p
 __pycache__/*
+utils/__pycache__/
 demo/.ipynb_checkpoints/*
 .ipynb_checkpoints/*
 demo/*.pt
