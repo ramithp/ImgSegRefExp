@@ -43,6 +43,8 @@ def conv(kernel_size, stride, in_channels, out_channels, padding=0, bias=True):
 
 def generate_spatial_batch(N, featmap_H, featmap_W):
     spatial_batch_val = np.zeros((N, featmap_H, featmap_W, 8), dtype=np.float32)
+    cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if cuda else "cpu")
     for h in range(featmap_H):
         for w in range(featmap_W):
             xmin = w / featmap_W * 2 - 1
@@ -53,7 +55,8 @@ def generate_spatial_batch(N, featmap_H, featmap_W):
             yctr = (ymin + ymax) / 2
             spatial_batch_val[:, h, w, :] = \
                 [xmin, ymin, xmax, ymax, xctr, yctr, 1 / featmap_W, 1 / featmap_H]
-    return torch.Tensor(spatial_batch_val)
+            
+    return torch.Tensor(spatial_batch_val).to(device)
 
 
 class LanguageModule(nn.Module):
