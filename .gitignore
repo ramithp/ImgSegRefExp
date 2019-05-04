@@ -3,3 +3,5 @@
 __pycache__/*
 demo/.ipynb_checkpoints/*
 .ipynb_checkpoints/*
+demo/*.pt
+*.pt
