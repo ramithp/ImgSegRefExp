@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import scipy.io as sio
-from utl import text_processing, im_processing
+import text_processing, im_processing
 
 ################################################################################
 # Parameters
@@ -24,6 +24,7 @@ num_vocab = 8803
 embed_dim = 1000
 lstm_dim = 1000
 mlp_hidden_dims = 500
+max_image_name_len = 20
 
 # Evaluation Param
 score_thresh = 1e-9
@@ -37,15 +38,25 @@ embed_dim = 1000
 lstm_dim = 1000
 mlp_hidden_dims = 500
 
-root = '/Users/shubhammehrotra/text_objseg/exp-referit/'
+if 'content' in os.getcwd():
+    root = '/content/'
+    image_dir = root + 'images/'
+    mask_dir = root + 'mask/'
+    query_file = root + 'referit_query_test.json'	
+    bbox_file = root + 'referit_bbox.json'
+    imcrop_file = root + 'referit_imcrop.json'	
+    imsize_file = root + 'referit_imsize.json'
+    vocab_file = root + 'vocabulary_referit.txt'
 
-image_dir = root + 'referit-dataset/images/'
-mask_dir = root + 'referit-dataset/mask/'
-query_file = root + 'data/referit_query_test.json'
-bbox_file = root + 'data/referit_bbox.json'
-imcrop_file = root + 'data/referit_imcrop.json'
-imsize_file = root + 'data/referit_imsize.json'
-vocab_file = root + 'data/vocabulary_referit.txt'
+else:
+    root = '/Users/shubhammehrotra/text_objseg/exp-referit/'
+    image_dir = root + 'referit-dataset/images/'
+    mask_dir = root + 'referit-dataset/mask/'
+    query_file = root + 'data/referit_query_test.json'
+    bbox_file = root + 'data/referit_bbox.json'
+    imcrop_file = root + 'data/referit_imcrop.json'
+    imsize_file = root + 'data/referit_imsize.json'
+    vocab_file = root + 'data/vocabulary_referit.txt'
 
 
 query_dict = json.load(open(query_file))
@@ -103,22 +114,34 @@ class ImageSegmentationDataset(Dataset):
         img_text = self.query_dict["{}_{}".format(current_img_main,current_img_crop)][current_img_text]
         text_seq_val = np.zeros((T, N), dtype=np.float32)
         char = [int(i) for i in str(current_img_main)]
+
+        mask_number = torch.from_numpy(np.array([current_img_crop]))
+        
         original_image = torch.from_numpy(np.array(char))
+        temp =  np.full(max_image_name_len, -1)
+        for i in range(len(char)):
+            temp[i] = char[i]
+        original_image = torch.from_numpy(np.array(temp))
+        # print ('O', original_image)
+        # print ('o shape', original_image.shape)
+        
         image = skimage.io.imread(image_dir + str(current_img_main) + '.jpg')
         #print (current_img_main)
-        print ('Image Name', image_dir + str(current_img_main))
+        #print ('Image Name', image_dir + str(current_img_main))
         processed_im = skimage.img_as_ubyte(im_processing.resize_and_pad(image, input_H, input_W))
         text_seq_val[:, 0] = text_processing.preprocess_sentence(img_text, vocab_dict, T)
         if processed_im.ndim == 2:
             processed_im = np.tile(processed_im[:, :, np.newaxis], (1, 1, 3))
         processed_im = transforms.ToTensor()(processed_im)
         #original_image = transforms.ToTensor()(image)
-        print ('Image Text', img_text)
+        #print ('Image Text', img_text)
         if (not self.test_flag):
             mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
+            #print ('Mask file name', mask_file_name)
             mask = load_mask(mask_file_name).astype(np.float32)
-            #processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
-            return processed_im, text_seq_val[:, 0], mask, original_image
+            #print ('Mask shape', mask.shape)
+            processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
+            return processed_im, text_seq_val[:, 0], processed_mask, original_image
         
         return processed_im, text_seq_val[:, 0]
 
@@ -128,9 +151,3 @@ train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
 test_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir, test = True)
 test_loader = DataLoader(test_dataset, batch_size=200)
-
-# for batch_idx, (image, text, mask, original_image) in enumerate(train_loader):
-#     print (batch_idx, image.shape)
-#     print (text.shape)
-#     print (original_image)
-#     break
