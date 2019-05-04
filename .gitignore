@@ -6,3 +6,4 @@ demo/.ipynb_checkpoints/*
 .ipynb_checkpoints/*
 demo/*.pt
 *.pt
+model/__pycache__/*

@@ -1,3 +1,6 @@
+from __future__ import absolute_import, division, print_function
+
+import re
 import sys
 import os
 import skimage.io
@@ -10,78 +13,226 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import scipy.io as sio
-from utils import text_processing, im_processing
+import skimage.transform
+import numpy as np
+import config
 
-################################################################################
-# Parameters
-################################################################################
+'''
+Borrows heavily from
+https://github.com/ronghanghu/text_objseg/tree/tensorflow-1.x-compatibility/util
+'''
+############################## TEXT UTILS ############################## 
+UNK_IDENTIFIER = '<unk>' # <unk> is the word used to identify unknown words
+SENTENCE_SPLIT_REGEX = re.compile(r'(\W+)')
+PAD_IDENTIFIER = '<pad>'
+EOS_IDENTIFIER = '<eos>'
 
-T = 20
-N = 1
-input_H = 512; featmap_H = (input_H // 32)
-input_W = 512; featmap_W = (input_W // 32)
-num_vocab = 8803
-embed_dim = 1000
-lstm_dim = 1000
-mlp_hidden_dims = 500
-max_image_name_len = 20
+def load_vocab_dict_from_file(dict_file):
+    with open(dict_file) as f:
+        words = [w.strip() for w in f.readlines()]
+    vocab_dict = {words[n]:n for n in range(len(words))}
+    return vocab_dict
 
-# Evaluation Param
-score_thresh = 1e-9
+def sentence2vocab_indices(sentence, vocab_dict):
+    words = SENTENCE_SPLIT_REGEX.split(sentence.strip())
+    words = [w.lower() for w in words if len(w.strip()) > 0]
+    # remove .
+    if words[-1] == '.':
+        words = words[:-1]
+    vocab_indices = [(vocab_dict[w] if w in vocab_dict else vocab_dict[UNK_IDENTIFIER])
+        for w in words]
+    return vocab_indices
 
-T = 20
-N = 1
-input_H = 512; featmap_H = (input_H // 32)
-input_W = 512; featmap_W = (input_W // 32)
-num_vocab = 8803
-embed_dim = 1000
-lstm_dim = 1000
-mlp_hidden_dims = 500
-
-root = '/home/nishaddawkhar/text_objseg/exp-referit/'
-
-image_dir = root + 'referit-dataset/images/'
-mask_dir = root + 'referit-dataset/mask/'
-query_file = root + 'data/referit_query_test.json'
-bbox_file = root + 'data/referit_bbox.json'
-imcrop_file = root + 'data/referit_imcrop.json'
-imsize_file = root + 'data/referit_imsize.json'
-vocab_file = root + 'data/vocabulary_referit.txt'
+def preprocess_sentence(sentence, vocab_dict, T):
+    vocab_indices = sentence2vocab_indices(sentence, vocab_dict)
+    # # Append '<eos>' symbol to the end
+    # vocab_indices.append(vocab_dict[EOS_IDENTIFIER])
+    # Truncate long sentences
+    if len(vocab_indices) > T:
+        vocab_indices = vocab_indices[:T]
+    # Pad short sentences at the beginning with the special symbol '<pad>'
+    if len(vocab_indices) < T:
+        vocab_indices = [vocab_dict[PAD_IDENTIFIER]] * (T - len(vocab_indices)) + vocab_indices
+    return vocab_indices
 
 
-query_dict = json.load(open(query_file))
-bbox_dict = json.load(open(bbox_file))
-imcrop_dict = json.load(open(imcrop_file))
-imsize_dict = json.load(open(imsize_file))
-imlist = list({name.split('_', 1)[0] + '.jpg' for name in query_dict})
-vocab_dict = text_processing.load_vocab_dict_from_file(vocab_file)
+############################## IMAGE UTILS ############################## 
 
-################################################################################
-# Flatten the annotations
-################################################################################
+def resize_pad_mask(mask, input_h, input_w):
+    im_h, im_w = mask.size()
+    
+    scale = min(input_h / im_h, input_w / im_w)
+    resized_h = int(np.round(im_h * scale))
+    resized_w = int(np.round(im_w * scale))
 
-flat_query_dict = {imname: [] for imname in imlist}
-for imname in imlist:
-    this_imcrop_names = imcrop_dict[imname]
-    for imcrop_name in this_imcrop_names:
-        gt_bbox = bbox_dict[imcrop_name]
-        if imcrop_name not in query_dict:
-            continue
-        this_descriptions = query_dict[imcrop_name]
-        for description in this_descriptions:
-            flat_query_dict[imname].append((imcrop_name, gt_bbox, description))
+    pad_h = int(np.floor(input_h - resized_h) / 2)
+    pad_w = int(np.floor(input_w - resized_w) / 2)
 
-def load_mask(mask_path):
-    mat = sio.loadmat(mask_path)
-    mask = (mat['segimg_t'] == 0)
-    return mask
+    transform = transforms.Compose([transforms.ToPILImage(),
+                      transforms.Resize([resized_w, resized_h], interpolation=1),
+                      transforms.Pad((pad_h, pad_w), fill=0, padding_mode='constant'),
+                      transforms.Resize([input_w, input_h], interpolation=1),
+                      transforms.ToTensor()])
+    img = transform(mask)
+    return img
+
+def resize_pad_torch(img, input_h, input_w):
+    im_h, im_w = img.size
+    
+    scale = min(input_h / im_h, input_w / im_w)
+    resized_h = int(np.round(im_h * scale))
+    resized_w = int(np.round(im_w * scale))
+
+    pad_h = int(np.floor(input_h - resized_h) / 2)
+    pad_w = int(np.floor(input_w - resized_w) / 2)
+
+    transform = transforms.Compose([transforms.Resize([resized_w, resized_h], interpolation=1),
+                  transforms.Pad((pad_h, pad_w), fill=0, padding_mode='constant'),
+                  transforms.Resize([input_w, input_h], interpolation=1),
+                  transforms.ToTensor()])
+    img = transform(img)
+    return img
+  
+
+def resize_recrop_torch(img, input_h, input_w):
+    im_h, im_w = img.shape
+    
+    # Resize and crop im to input_h x input_w size
+    scale = max(input_h / im_h, input_w / im_w)
+    
+    resized_h = int(np.round(im_h * scale))
+    resized_w = int(np.round(im_w * scale))
+    
+    crop_h = int(np.floor(resized_h - input_h) / 2)
+    crop_w = int(np.floor(resized_w - input_w) / 2)
+
+    transform = transforms.Compose([transforms.ToPILImage(),
+                              transforms.Resize([resized_w, resized_h], interpolation=1),
+                              transforms.CenterCrop((resized_w - 2*crop_w, resized_h - 2*crop_h)),
+                              transforms.ToTensor()])
+    img = transform(img)  
+    return img
+
+def resize_and_pad(im, input_h, input_w):
+    # Resize and pad im to input_h x input_w size
+    im_h, im_w = im.shape[:2]
+    scale = min(input_h / im_h, input_w / im_w)
+    resized_h = int(np.round(im_h * scale))
+    resized_w = int(np.round(im_w * scale))
+    pad_h = int(np.floor(input_h - resized_h) / 2)
+    pad_w = int(np.floor(input_w - resized_w) / 2)
+
+    resized_im = skimage.transform.resize(im, [resized_h, resized_w])
+    if im.ndim > 2:
+        new_im = np.zeros((input_h, input_w, im.shape[2]), dtype=resized_im.dtype)
+    else:
+        new_im = np.zeros((input_h, input_w), dtype=resized_im.dtype)
+    new_im[pad_h:pad_h+resized_h, pad_w:pad_w+resized_w, ...] = resized_im
+
+    return new_im
+
+def resize_and_crop(im, input_h, input_w):
+    # Resize and crop im to input_h x input_w size
+    im_h, im_w = im.shape[:2]
+    scale = max(input_h / im_h, input_w / im_w)
+    resized_h = int(np.round(im_h * scale))
+    resized_w = int(np.round(im_w * scale))
+    crop_h = int(np.floor(resized_h - input_h) / 2)
+    crop_w = int(np.floor(resized_w - input_w) / 2)
+
+    resized_im = skimage.transform.resize(im, [resized_h, resized_w])
+    if im.ndim > 2:
+        new_im = np.zeros((input_h, input_w, im.shape[2]), dtype=resized_im.dtype)
+    else:
+        new_im = np.zeros((input_h, input_w), dtype=resized_im.dtype)
+    new_im[...] = resized_im[crop_h:crop_h+input_h, crop_w:crop_w+input_w, ...]
+
+    return new_im
+
+def crop_bboxes_subtract_mean(im, bboxes, crop_size, image_mean):
+    if isinstance(bboxes, list):
+        bboxes = np.array(bboxes)
+    bboxes = bboxes.reshape((-1, 4))
+
+    im = skimage.img_as_ubyte(im)
+    num_bbox = bboxes.shape[0]
+    imcrop_batch = np.zeros((num_bbox, crop_size, crop_size, 3), dtype=np.float32)
+    for n_bbox in range(bboxes.shape[0]):
+        xmin, ymin, xmax, ymax = bboxes[n_bbox]
+        # crop and resize
+        imcrop = im[ymin:ymax+1, xmin:xmax+1, :]
+        imcrop_batch[n_bbox, ...] = skimage.img_as_ubyte(
+            skimage.transform.resize(imcrop, [crop_size, crop_size]))
+    imcrop_batch -= image_mean
+    return imcrop_batch
+
+def bboxes_from_masks(masks):
+    if masks.ndim == 2:
+        masks = masks[np.newaxis, ...]
+    num_mask = masks.shape[0]
+    bboxes = np.zeros((num_mask, 4), dtype=np.int32)
+    for n_mask in range(num_mask):
+        idx = np.nonzero(masks[n_mask])
+        xmin, xmax = np.min(idx[1]), np.max(idx[1])
+        ymin, ymax = np.min(idx[0]), np.max(idx[0])
+        bboxes[n_mask, :] = [xmin, ymin, xmax, ymax]
+    return bboxes
+
+def crop_masks_subtract_mean(im, masks, crop_size, image_mean):
+    if masks.ndim == 2:
+        masks = masks[np.newaxis, ...]
+    num_mask = masks.shape[0]
+
+    im = skimage.img_as_ubyte(im)
+    bboxes = bboxes_from_masks(masks)
+    imcrop_batch = np.zeros((num_mask, crop_size, crop_size, 3), dtype=np.float32)
+    for n_mask in range(num_mask):
+        xmin, ymin, xmax, ymax = bboxes[n_mask]
+
+        # crop and resize
+        im_masked = im.copy()
+        mask = masks[n_mask, ..., np.newaxis]
+        im_masked *= mask
+        im_masked += image_mean.astype(np.uint8) * (1 - mask)
+        imcrop = im_masked[ymin:ymax+1, xmin:xmax+1, :]
+        imcrop_batch[n_mask, ...] = skimage.img_as_ubyte(skimage.transform.resize(imcrop, [224, 224]))
+
+    imcrop_batch -= image_mean
+    return imcrop_batch
+
+
+############################## DATASET CLASS(ES) ############################## 
 
 class ImageSegmentationDataset(Dataset):
+    @staticmethod
+    def load_mask(mask_path):
+        mat = sio.loadmat(mask_path)
+        mask = (mat['segimg_t'] == 0)
+        return mask
 
     def __init__(self, query_file, root_directory_image, root_directory_mask, test = False, transform = None):
         
+        self.query_dict = json.load(open(config.query_file))
+        self.bbox_dict = json.load(open(config.bbox_file))
+        self.imcrop_dict = json.load(open(config.imcrop_file))
+        self.imsize_dict = json.load(open(config.imsize_file))
+        self.imlist = list({name.split('_', 1)[0] + '.jpg' for name in self.query_dict})
+        self.vocab_dict = load_vocab_dict_from_file(config.vocab_file)
+
+        self.flat_query_dict = {imname: [] for imname in self.imlist}
+        for imname in self.imlist:
+            this_imcrop_names = self.imcrop_dict[imname]
+            for imcrop_name in this_imcrop_names:
+                gt_bbox = self.bbox_dict[imcrop_name]
+                if imcrop_name not in self.query_dict:
+                    continue
+                this_descriptions = self.query_dict[imcrop_name]
+                for description in this_descriptions:
+                    self.flat_query_dict[imname].append((imcrop_name, gt_bbox, description))
+
         self.root_directory_image = root_directory_image
         self.root_directory_mask = root_directory_mask
+        
         self.query_file = query_file
         self.query_dict = json.load(open(self.query_file))
         self.query_keys = []
@@ -91,7 +242,6 @@ class ImageSegmentationDataset(Dataset):
                 self.query_keys.append("{}_{}".format(key,idx))
         self.dataset_length = len(self.query_keys)
         self.test_flag = test
-        self.transform = transform
 
     def __len__(self):
         return self.dataset_length
@@ -101,43 +251,27 @@ class ImageSegmentationDataset(Dataset):
         current_img_main = int(current_img_name.split("_")[0])
         current_img_crop = int(current_img_name.split("_")[1])
         current_img_text = int(current_img_name.split("_")[2])
-        img_text = self.query_dict["{}_{}".format(current_img_main,current_img_crop)][current_img_text]
-        text_seq_val = np.zeros((T, N), dtype=np.float32)
-        char = [int(i) for i in str(current_img_main)]
+        
+        # Get image to pass around
+        img_name = os.path.join(config.image_dir + str(current_img_main) + '.jpg')
+        img = Image.open(img_name)
+        img = img.convert('RGB')
 
-        mask_number = torch.from_numpy(np.array([current_img_crop]))
+        processed_im = resize_pad_torch(img, config.input_H, config.input_W)
         
-        original_image = torch.from_numpy(np.array(char))
-        temp =  np.full(max_image_name_len, -1)
-        for i in range(len(char)):
-            temp[i] = char[i]
-        original_image = torch.from_numpy(np.array(temp))
-        # print ('O', original_image)
-        # print ('o shape', original_image.shape)
-        
-        image = skimage.io.imread(image_dir + str(current_img_main) + '.jpg')
-        #print (current_img_main)
-        #print ('Image Name', image_dir + str(current_img_main))
-        processed_im = skimage.img_as_ubyte(im_processing.resize_and_pad(image, input_H, input_W))
-        text_seq_val[:, 0] = text_processing.preprocess_sentence(img_text, vocab_dict, T)
-        if processed_im.ndim == 2:
+        # Get text
+        img_text = self.query_dict["{}_{}".format(current_img_main, current_img_crop)][current_img_text]
+        text_seq_val = np.zeros((config.T, config.N), dtype=np.float32)
+        text_seq_val[:, 0] = preprocess_sentence(img_text, self.vocab_dict, config.T)
+
+        if len(processed_im.size()) == 2:
+            print("HALLO")
             processed_im = np.tile(processed_im[:, :, np.newaxis], (1, 1, 3))
-        processed_im = transforms.ToTensor()(processed_im)
-        #original_image = transforms.ToTensor()(image)
-        #print ('Image Text', img_text)
+
         if (not self.test_flag):
             mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
-            #print ('Mask file name', mask_file_name)
-            mask = load_mask(mask_file_name).astype(np.float32)
-            #print ('Mask shape', mask.shape)
-            processed_mask = im_processing.resize_and_pad(mask, input_H, input_W)
-            return processed_im, text_seq_val[:, 0], processed_mask, original_image
-        
-        return (processed_im, text_seq_val[:, 0])
-
-
-train_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir)
-train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-
-test_dataset = ImageSegmentationDataset(query_file, image_dir, mask_dir, test = True)
-test_loader = DataLoader(test_dataset, batch_size=200)
+            mask = torch.Tensor(ImageSegmentationDataset.load_mask(mask_file_name).astype(np.float32))
+            processed_mask = resize_pad_mask(mask, config.input_H, config.input_W)
+            return img.size, processed_im, processed_mask, text_seq_val[:, 0] 
+                    
+        return processed_im, text_seq_val[:, 0]
