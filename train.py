@@ -100,7 +100,7 @@ def main():
     # Combine weight decay regularisation with optimiser
     optimizer = torch.optim.SGD(model.parameters(),lr=config.start_lr, momentum=config.momentum, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.lr_decay_step, gamma=config.lr_decay_rate)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor(int(config.pos_loss_mult),int(config.neg_loss_mult)).to(config.device))
+    criterion = nn.BCEWithLogitsLoss(reduction="none")
 
     train_dataset = ImageSegmentationDataset(config.query_file, config.image_dir, config.mask_dir)
     val_dataset = ImageSegmentationDataset(config.query_file_val, config.image_dir, config.mask_dir)
