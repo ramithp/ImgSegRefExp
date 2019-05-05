@@ -105,8 +105,8 @@ def main():
     train_dataset = ImageSegmentationDataset(config.query_file, config.image_dir, config.mask_dir)
     val_dataset = ImageSegmentationDataset(config.query_file_val, config.image_dir, config.mask_dir)
 
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-    val_loader = DataLoader(val_dataset,batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset,batch_size=32, shuffle=False)
 
     model_parameters = filter(lambda p: p.requires_grad, model.img_features.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
@@ -118,10 +118,8 @@ def main():
 
     for i in range(0, config.n_epochs):
         print("Training for epoch %d" % (i))
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, config.device, )
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, config.device)
         test_loss = eval_model(model, val_loader, criterion, config.device)
-
-        torch.save(model.state_dict(), config.SAVE_PATH_PREFIX + '/models/model_dict_'+ str(i) + '.pt')
 
         print('='*20)
 

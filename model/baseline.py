@@ -76,7 +76,7 @@ class DeconvLayer(nn.Module):
         self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
                                         stride=stride, bias=bias, padding=16)
         
-        init_weights(self.dconv)
+        self.dconv.apply(init_weights)
 
     def forward(self, inp):
         # batch_size, input_dim, input_height, input_width = inp.shape

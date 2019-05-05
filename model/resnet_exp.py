@@ -33,8 +33,8 @@ class ImageModuleResnet(nn.Module):
         self.res_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=2048, out_channels=1000)
 
         # init
-        init_weights(self.res_fc7_full_conv)
-        init_weights(self.res_fc8_full_conv)
+        self.res_fc7_full_conv.apply(init_weights)
+        self.res_fc8_full_conv.apply(init_weights)
 
     def forward(self, inputs):
         x = self.feature_extractor(inputs)
@@ -54,8 +54,8 @@ class ResImgSeg(nn.Module):
         self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
         
         # init
-        init_weights(self.mlp1)
-        init_weights(self.mlp2)
+        self.mlp1.apply(init_weights)
+        self.mlp2.apply(init_weights)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
