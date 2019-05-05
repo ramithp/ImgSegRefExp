@@ -59,3 +59,6 @@ pretrained_wts = True
 # pretrained_model_file = "./text_objseg_pretrained_torch_converted_with_lstm.pt"
 pretrained_model_file = "./model_dict_0.pt"
 vocab_file = './vocabulary_referit.txt'
+
+# Use Mask-R-CNN resnet-101 weights
+resnet_wts_file = './resnet101-mask-r-cnn.pth'

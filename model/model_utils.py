@@ -9,6 +9,9 @@ def init_weights(m):
     if type(m) == nn.Conv2d :
         print("init conv")
         nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+    elif type(m) == nn.ConvTranspose2d :
+        print("init conv")
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
     elif type(m) == nn.BatchNorm2d:
         print("init bn")
         nn.init.constant_(m.weight, 1)

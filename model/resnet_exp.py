@@ -5,14 +5,18 @@ import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
 import numpy as np
 from model.baseline import LanguageModule, DeconvLayer
-from model.model_utils import generate_spatial_batch, conv_relu, conv
+from model.model_utils import generate_spatial_batch, conv_relu, conv, init_weights
+import config
 
 class ImageModuleResnet(nn.Module):
-    def __init__(self):
+    def __init__(self, resnet_weights_file=None):
         super(ImageModuleResnet, self).__init__()
 
-        # Freeze VGG weights for all layers except FC layers
-        self.feature_extractor = models.resnet101(pretrained=True)
+        # Freeze Resnet weights for all layers except FC layers
+        self.feature_extractor = models.resnet101(pretrained=False)
+        if resnet_weights_file:
+            self.feature_extractor.load_state_dict(torch.load(resnet_weights_file))
+
         self.feature_extractor = torch.nn.Sequential(*list(self.feature_extractor.children())[:-2])
 
         for param in self.feature_extractor.parameters():
@@ -24,8 +28,13 @@ class ImageModuleResnet(nn.Module):
             conv_relu(kernel_size=7, stride=1, in_channels=1024, out_channels=2048, padding=(3, 3)),
             conv_relu(kernel_size=1, stride=1, in_channels=2048, out_channels=2048))
 
+
         # Padding not needed. Just a 1x1
         self.res_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=2048, out_channels=1000)
+
+        # init
+        init_weights(self.res_fc7_full_conv)
+        init_weights(self.res_fc8_full_conv)
 
     def forward(self, inputs):
         x = self.feature_extractor(inputs)
@@ -39,10 +48,14 @@ class ResImgSeg(nn.Module):
         self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1,
                                             hidden_size=lstm_hidden_size)
 
-        self.img_features = ImageModuleResnet()
+        self.img_features = ImageModuleResnet(resnet_weights_file=config.resnet_wts_file)
 
         self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=mlp_hidden)
         self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
+        
+        # init
+        init_weights(self.mlp1)
+        init_weights(self.mlp2)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
@@ -55,7 +68,7 @@ class ResImgSeg(nn.Module):
 
         # N C H W format
         featmap_H, featmap_W = img_out.size(2), img_out.size(3)
-        print(featmap_H, featmap_W)
+
         # bsz x hidden_dim
         N, D_text = text_out.size(0), text_out.size(1)
 

@@ -72,10 +72,10 @@ def test_model(model, test_loader, device):
 def main():
     print("Evaluating IoU")
     # Load model and weights
-    model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
-    # model = ResImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    # model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    model = ResImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
 
-    pre_trained = torch.load("model_dict_ep_0_iter_800.pt")
+    pre_trained = torch.load("model_dict_ep_cuda_0_iter_1600.pt")
     model.load_state_dict(pre_trained)
 
     model.to(config.device)

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
 import numpy as np
-from model.model_utils import generate_spatial_batch, conv_relu, conv
+from model.model_utils import generate_spatial_batch, conv_relu, conv, init_weights
 
 class LanguageModule(nn.Module):
     def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
@@ -19,6 +19,8 @@ class LanguageModule(nn.Module):
                         hidden_size=hidden_size,
                         num_layers=num_lstm_layers,
                         bidirectional=False, batch_first=True)
+
+        init_weights(self.lstm)
 
     def forward(self, input_seq):
         # Incoming is a bsz x seq_len
@@ -74,6 +76,8 @@ class DeconvLayer(nn.Module):
         self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
                                         stride=stride, bias=bias, padding=16)
         
+        init_weights(self.dconv)
+
     def forward(self, inp):
         # batch_size, input_dim, input_height, input_width = inp.shape
         return self.dconv(inp)
