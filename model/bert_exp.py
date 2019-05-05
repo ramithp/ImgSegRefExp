@@ -5,12 +5,40 @@ import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
 import numpy as np
 
-class ResNetBackboneImgSegModel(nn.Module):
-    def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
-        super(ImgSegRefExpModel, self).__init__()
-        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1, hidden_size=lstm_hidden_size)
 
-        self.img_features = ImageModule()
+class ImageModuleResnet(nn.Module):
+
+    def __init__(self):
+        super(ImageModuleResnet, self).__init__()
+
+        # Freeze VGG weights for all layers except FC layers
+        self.feature_extractor = models.resnet101(pretrained=True)
+        self.feature_extractor = torch.nn.Sequential(*list(self.feature_extractor.children())[:-2])
+
+        # Padding is 3x3 because after VGG16 layers, we get a 16x16 feature map. k=7 needs 5 to get "SAME" padding
+        res_fc7_full_conv = nn.Sequential(
+            conv_relu(kernel_size=7, stride=1, in_channels=2048, out_channels=4096, padding=(3, 3)),
+            conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
+
+        # Padding not needed. Just a 1x1
+        res_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=4096, out_channels=1000)
+
+        self.feature_extractor.add_module("resnet_fc7_full_conv", res_fc7_full_conv)
+        self.feature_extractor.add_module("resnet_fc8_full_conv", res_fc8_full_conv)
+
+    def forward(self, inputs):
+        x = self.feature_extractor(inputs)
+        print(x.shape)
+        return x
+
+
+class ResImgSeg(nn.Module):
+    def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
+        super(ResImgSeg, self).__init__()
+        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1,
+                                            hidden_size=lstm_hidden_size)
+
+        self.img_features = ImageModuleResnet()
 
         self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=mlp_hidden)
         self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
@@ -31,39 +59,41 @@ class ResNetBackboneImgSegModel(nn.Module):
         N, D_text = text_out.size(0), text_out.size(1)
 
         # Tile the textual features with the image feature-maps
-        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)        
+        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)
 
         # Generate spatial features to learn co-ordinates
         spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
-        
+
         # Concat 3 sources of inputs
         # Output is of shape N x (D_text + D_img + D_spatial) x H x W
         concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
-                             F.normalize(img_out, p=2, dim=1),
-                             spatial_feats], dim=1)
+                                F.normalize(img_out, p=2, dim=1),
+                                spatial_feats], dim=1)
 
         # Series of linear layers to reduce dimensions
         mlp_out = self.mlp1(concat_out)
         mlp_out = self.mlp2(mlp_out)
-        
+
         # Final deconvolution to get the upsampled mask
         generated_mask = self.deconv(mlp_out)
 
-        return generated_mask                
+        return generated_mask
 
 
-class ContextualizedImgSegModel(nn.Module):
+class ResImgSegDeconved(nn.Module):
     def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
-        super(ImgSegRefExpModel, self).__init__()
-        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1, hidden_size=lstm_hidden_size)
+        super(ResImgSegDeconved, self).__init__()
+        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1,
+                                            hidden_size=lstm_hidden_size)
 
-        self.img_features = ImageModule()
+        self.img_features = ImageModuleResnet()
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=mlp_hidden)
-        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=256)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
-        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
+        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=mlp_hidden, bias=False, in_channels=256)
+
+        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
 
     def forward(self, inputs):
         img_input, text_input = inputs
@@ -78,22 +108,23 @@ class ContextualizedImgSegModel(nn.Module):
         N, D_text = text_out.size(0), text_out.size(1)
 
         # Tile the textual features with the image feature-maps
-        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)        
+        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)
 
         # Generate spatial features to learn co-ordinates
         spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
-        
+
         # Concat 3 sources of inputs
         # Output is of shape N x (D_text + D_img + D_spatial) x H x W
         concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
-                             F.normalize(img_out, p=2, dim=1),
-                             spatial_feats], dim=1)
+                                F.normalize(img_out, p=2, dim=1),
+                                spatial_feats], dim=1)
 
         # Series of linear layers to reduce dimensions
         mlp_out = self.mlp1(concat_out)
-        mlp_out = self.mlp2(mlp_out)
-        
-        # Final deconvolution to get the upsampled mask
-        generated_mask = self.deconv(mlp_out)
 
-        return generated_mask                
+        # Final deconvolution to get the upsampled mask
+        deconv_out = self.deconv(mlp_out)
+
+        generated_mask = self.mlp2(deconv_out)
+
+        return F.softmax(generated_mask)

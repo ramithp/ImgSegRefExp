@@ -10,7 +10,7 @@ score_thresh = 1e-9
 
 # Model Params
 T = 20
-N = 10
+N = 1
 input_H = 512; featmap_H = (input_H // 32)
 input_W = 512; featmap_W = (input_W // 32)
 num_vocab = 8803
@@ -52,8 +52,10 @@ imcrop_file = root + 'data/referit_imcrop.json'
 imsize_file = root + 'data/referit_imsize.json'
 vocab_file = root + 'data/vocabulary_referit.txt'
 query_file_val = root + 'data/referit_query_val.json'
+custom_test_set = root + 'data/query_dict_custom_testset.json'
 
 # trained model
 pretrained_wts = True
-pretrained_model_file = "./text_objseg_pretrained_torch_converted_with_lstm.pt"
+# pretrained_model_file = "./text_objseg_pretrained_torch_converted_with_lstm.pt"
+pretrained_model_file = "./model_dict_0.pt"
 vocab_file = './vocabulary_referit.txt'

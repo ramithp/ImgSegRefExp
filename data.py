@@ -134,13 +134,17 @@ def resize_and_pad(im, input_h, input_w):
 def resize_and_crop(im, input_h, input_w):
     # Resize and crop im to input_h x input_w size
     im_h, im_w = im.shape[:2]
+
     scale = max(input_h / im_h, input_w / im_w)
+    
     resized_h = int(np.round(im_h * scale))
     resized_w = int(np.round(im_w * scale))
+
     crop_h = int(np.floor(resized_h - input_h) / 2)
     crop_w = int(np.floor(resized_w - input_w) / 2)
 
     resized_im = skimage.transform.resize(im, [resized_h, resized_w])
+
     if im.ndim > 2:
         new_im = np.zeros((input_h, input_w, im.shape[2]), dtype=resized_im.dtype)
     else:

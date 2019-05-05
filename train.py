@@ -5,6 +5,7 @@ import numpy as np
 from data import ImageSegmentationDataset
 from torch.utils.data import DataLoader
 from model.baseline import ImgSegRefExpModel
+from model.resnet_exp import ResImgSeg
 import config
 from torch.optim import SGD
 import torch
@@ -75,11 +76,12 @@ def eval_model(model, val_loader, criterion, device, epoch_num):
 def main():
     print("Starting training")
     # Load model and weights
-    model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    # model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    model = ResImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
 
-    if config.pretrained_wts:
-        pre_trained = torch.load(config.pretrained_model_file)
-        model.load_state_dict(pre_trained)
+    # if config.pretrained_wts:
+        # pre_trained = torch.load(config.pretrained_model_file)
+        # model.load_state_dict(pre_trained)
 
     model.to(config.device)
     print(model)
@@ -92,9 +94,16 @@ def main():
     train_dataset = ImageSegmentationDataset(config.query_file, config.image_dir, config.mask_dir)
     val_dataset = ImageSegmentationDataset(config.query_file_val, config.image_dir, config.mask_dir)
 
-    train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
-    val_loader = DataLoader(val_dataset,batch_size=10, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    val_loader = DataLoader(val_dataset,batch_size=1, shuffle=False)
 
+    model_parameters = filter(lambda p: p.requires_grad, model.img_features.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print("Total params:", params)
+
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print("Total params:", params)
 
     for i in range(0, config.n_epochs):
         print("Training for epoch %d" % (i))
