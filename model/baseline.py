@@ -7,7 +7,7 @@ import numpy as np
 from model_utils import generate_spatial_batch, conv_relu, conv, init_weights
 
 class LanguageModule(nn.Module):
-    def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
+    def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size, return_all=False):
         super(LanguageModule, self).__init__()
 
         # TODO: padding index
@@ -16,11 +16,12 @@ class LanguageModule(nn.Module):
         # TODO init bias as 1: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/models/lstm_net.py#L16
         # Not a bi-LSTM: https://github.com/ramithp/text_objseg/blob/tensorflow-1.x-compatibility/util/rnn.py#L57
         self.lstm = nn.LSTM(input_size=emb_size,
-                        hidden_size=hidden_size,
-                        num_layers=num_lstm_layers,
-                        bidirectional=False, batch_first=True)
+                            hidden_size=hidden_size,
+                            num_layers=num_lstm_layers,
+                            bidirectional=False, batch_first=True)
 
         init_weights(self.lstm)
+        self.return_all = return_all
 
     def forward(self, input_seq):
         # Incoming is a bsz x seq_len
@@ -28,20 +29,23 @@ class LanguageModule(nn.Module):
         bsz = len(input_seq)
         max_seq_len = len(input_seq[0])
         in_lens = [len(seq) for seq in input_seq]
-
+        #         pdb.set_trace()
         # Pad to bs x max_seq_len
         padded_seqs = rnn_utils.pad_sequence(input_seq, batch_first=True)
 
         # Retrieve embeddings it into bsz x seq_len x embedding_size; including for <pad> tokens
         embedded_seqs = self.embedding(input_seq)
-        
+
         # Goes in as bsz x seq_len x embedding_dim
         # Comes out of this as bsz x seq_len x embedding_dim
         packed_seqs = rnn_utils.pack_padded_sequence(embedded_seqs, lengths=in_lens, batch_first=True)
 
         hidden = None # internally sets to 0 vector embeddings
         output_packed, (hidden, _) = self.lstm(packed_seqs, hidden)
-        
+
+        if self.return_all:
+            rnn_out, lens = rnn_utils.pad_packed_sequence(output_packed, batch_first=True)
+            return rnn_out, torch.sum(input_seq > 0, dim=-1)
         # Output is now seq_len x bsz x hidden_dim
         return hidden[-1]
 
@@ -54,10 +58,10 @@ class ImageModule(nn.Module):
         # Freeze VGG weights for all layers except FC layers
         self.feature_extractor = models.vgg16(pretrained=True)
         self.feature_extractor = self.feature_extractor.features
-        
+
         # Padding is 3x3 because after VGG16 layers, we get a 16x16 feature map. k=7 needs 5 to get "SAME" padding
         vgg_fc7_full_conv = nn.Sequential(conv_relu(kernel_size=7, stride=1, in_channels=512, out_channels=4096, padding=(3, 3)),
-                                  conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
+                                          conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
 
         # Padding not needed. Just a 1x1
         vgg_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=4096, out_channels=1000)
@@ -71,11 +75,11 @@ class ImageModule(nn.Module):
 
 
 class DeconvLayer(nn.Module):
-    def __init__(self, kernel_size, stride, output_dim, bias=False):
+    def __init__(self, kernel_size, stride, output_dim, bias=False, in_channels=1):
         super(DeconvLayer, self).__init__()
-        self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
+        self.dconv = nn.ConvTranspose2d(in_channels=in_channels, out_channels=output_dim, kernel_size=kernel_size,
                                         stride=stride, bias=bias, padding=16)
-        
+
         self.dconv.apply(init_weights)
 
     def forward(self, inp):
@@ -97,7 +101,7 @@ class ImgSegRefExpModel(nn.Module):
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
-	
+    
     def forward(self, inputs):
         img_input, text_input = inputs
 
@@ -110,62 +114,59 @@ class ImgSegRefExpModel(nn.Module):
         N, D_text = text_out.size(0), text_out.size(1)
 
         # Tile the textual features with the image feature-maps
-        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)        
+        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)
 
         # Generate spatial features to learn co-ordinates
         spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
-        
+
         # Concat 3 sources of inputs
         # Output is of shape N x (D_text + D_img + D_spatial) x H x W
         concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
-                             F.normalize(img_out, p=2, dim=1),
-                             spatial_feats], dim=1)
+                                F.normalize(img_out, p=2, dim=1),
+                                spatial_feats], dim=1)
 
         # Series of linear layers to reduce dimensions
         mlp_out = self.mlp1(concat_out)
         mlp_out = self.mlp2(mlp_out)
-        
+
         # Final deconvolution to get the upsampled mask
         generated_mask = self.deconv(mlp_out)
-
         return generated_mask  
 
 class VisualContextModule(nn.Module):
-	# Cv : Image + spatial features channel size
-	# Cg : Visual Context channel size
-	# Implemented as given in http://openaccess.thecvf.com/content_ECCV_2018/papers/Hengcan_Shi_Key-Word-Aware_Network_for_ECCV_2018_paper.pdf
-	def __init__(self, Cg, Cv, Thrsh = 1//20):          
-		self.cg = Cg
-		self.cv = Cv
-		self.threshold = Thrsh
-		self.linear_relu = nn.Sequential(nn.Linear(self.cv,self.cg),nn.ReLU())
-	
-	# Input:
-	#	image_features(must include spatial feats) : B * Cv * W * H			attention_values : B * T * W * H
-	# Output:
-	#	visual_context: B * Cg * W * H
-	def forward(self,image_features, attention_values):
-		# B * T * W * H
-		masked_attention = (attention_values > self.threshold).float()
-		batch_size = image_features.size(0)
-		width = image_features.size(2)
-		height = image_features.size(3)
-		text_len = attention_values.size(1)
-		relevant_attentions_mask = torch.max(attention_values.view(batch_size,text_len,-1),dim=2)[0] > self.threshold   # B * T 
+    # Cv : Image + spatial features channel size
+    # Cg : Visual Context channel size
+    # Implemented as given in http://openaccess.thecvf.com/content_ECCV_2018/papers/Hengcan_Shi_Key-Word-Aware_Network_for_ECCV_2018_paper.pdf
+    def __init__(self, Cg, Cv, Thrsh = 1//20):
+        super(VisualContextModule,self).__init__()
+        self.cg = Cg
+        self.cv = Cv
+        self.threshold = Thrsh
+        self.linear_relu = nn.Sequential(nn.Linear(self.cv,self.cg),nn.ReLU())
+    
+    # Input:
+    #	image_features(must include spatial feats) : B * Cv * W * H			attention_values : B * T * W * H
+    # Output:
+    #	visual_context: B * Cg * W * H
+    def forward(self,image_features, attention_values):
+        # B * T * W * H
+        masked_attention = (attention_values > self.threshold).float()
+        batch_size = image_features.size(0)
+        width = image_features.size(2)
+        height = image_features.size(3)
+        text_len = attention_values.size(1)
+        relevant_attentions_mask = (torch.max(attention_values.view(batch_size,text_len,-1),dim=2)[0] > self.threshold).float()   # B * T 
 
-		# X = W*H
-		# B * Cv * X (*)  B * X * T  -> B * Cv * T
-		attended_visual_messages =  torch.bmm(image_features.view(batch_size, self.cv, -1),
-												masked_attention.view(batch_size,text_len,-1).permute(0,2,1)) 
-		attended_visual_messages = attended_visual_messages / torch.sum(masked_attention.view(batch_size,text_len,-1),dim=2).unsqueeze(1)
+        # X = W*H
+        # B * Cv * X (*)  B * X * T  -> B * Cv * T
+        attended_visual_messages =  torch.bmm(image_features.view(batch_size, self.cv, -1),
+                                                masked_attention.view(batch_size,text_len,-1).permute(0,2,1)) 
+        attended_visual_messages = attended_visual_messages / torch.sum(masked_attention.view(batch_size,text_len,-1),dim=2).unsqueeze(1)
 
-		# Gt : B * Cg * T
-		Gt = self.linear_relu(attended_visual_messages.permute(0,2,1)).permute(0,2,1) * relevant_attentions_mask.unsqueeze(1)
-		
-		# B * Cg * T (*) B * T * (W * H)  -> B * Cg * (W*H)
-		c = torch.bmm(Gt,masked_attention.view(batch_size,text_len,-1)).view(batch_size,self.cg,width,height)
+        # Gt : B * Cg * T
+        Gt = self.linear_relu(attended_visual_messages.permute(0,2,1)).permute(0,2,1) * relevant_attentions_mask.unsqueeze(1)
+        
+        # B * Cg * T (*) B * T * (W * H)  -> B * Cg * (W*H)
+        c = torch.bmm(Gt,masked_attention.view(batch_size,text_len,-1)).view(batch_size,self.cg,width,height)
 
-		return c
-
-
-		
+        return c
