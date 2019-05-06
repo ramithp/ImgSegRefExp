@@ -57,9 +57,4 @@ def generate_spatial_batch(N, featmap_H, featmap_W):
             
     return torch.Tensor(spatial_batch_val).to(device)
 
-	# Input:
-	#	image_features : B * Cim * W * H	spatial_features : B * Cs * W * H  attention_values : W * H * T
-	# Output:
-	#	visual_context: B * (Cim+Cs) * W * H
-	def visual_context(image_features, spatial_features, attention_values):
 		

@@ -44,7 +44,7 @@ def sentence2vocab_indices(sentence, vocab_dict):
         for w in words]
     return vocab_indices
 
-def preprocess_sentence(sentence, vocab_dict, T):
+def preprocess_sentence(sentence, vocab_dict, T, pad_type='left'):
     vocab_indices = sentence2vocab_indices(sentence, vocab_dict)
     # # Append '<eos>' symbol to the end
     # vocab_indices.append(vocab_dict[EOS_IDENTIFIER])
@@ -53,7 +53,10 @@ def preprocess_sentence(sentence, vocab_dict, T):
         vocab_indices = vocab_indices[:T]
     # Pad short sentences at the beginning with the special symbol '<pad>'
     if len(vocab_indices) < T:
-        vocab_indices = [vocab_dict[PAD_IDENTIFIER]] * (T - len(vocab_indices)) + vocab_indices
+        if pad_type=="left":
+            vocab_indices = [vocab_dict[PAD_IDENTIFIER]] * (T - len(vocab_indices)) + vocab_indices
+        else:
+            vocab_indices = vocab_indices + [vocab_dict[PAD_IDENTIFIER]] * (T - len(vocab_indices))
     return vocab_indices
 
 
@@ -302,7 +305,7 @@ class ImageSegmentationDataset(Dataset):
         # Get text
         img_text = self.query_dict["{}_{}".format(current_img_main, current_img_crop)][current_img_text]
         text_seq_val = np.zeros((config.T, config.N), dtype=np.float32)
-        text_seq_val[:, 0] = preprocess_sentence(img_text, self.vocab_dict, config.T)
+        text_seq_val[:, 0] = preprocess_sentence(img_text, self.vocab_dict, config.T, pad_type='right')
 
         if len(processed_im.size()) == 2:
             print("HALLO")

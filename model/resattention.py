@@ -39,7 +39,7 @@ class ResAttnImgSeg(nn.Module):
         max_inp_len = torch.max(input_lens).item()
         #         pdb.set_trace()
         out_mod = torch.arange(max_inp_len).cuda().unsqueeze(0).repeat([batch_size, 1])
-        out = out_mod < (max_inp_len - input_lens.unsqueeze(1))
+        out = out_mod >= input_lens.unsqueeze(1)
         return out.byte()
 
     def get_attn_weights(self, keys, queries):
