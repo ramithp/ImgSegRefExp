@@ -28,24 +28,30 @@ class LanguageModule(nn.Module):
         # Assumes already padded
         bsz = len(input_seq)
         max_seq_len = len(input_seq[0])
-        in_lens = [len(seq) for seq in input_seq]
+        # in_lens = [len(seq) for seq in input_seq]
+        in_lens = torch.sum(input_seq > 0, dim=-1)
+        lens = [len.item() for len in in_lens]
+        seq_order = sorted(range(len(lens)), key=lens.__getitem__, reverse=True)
+        seq_order_t = input_seq.new_tensor(seq_order)
         #         pdb.set_trace()
         # Pad to bs x max_seq_len
-        padded_seqs = rnn_utils.pad_sequence(input_seq, batch_first=True)
+        # padded_seqs = rnn_utils.pad_sequence(input_seq, batch_first=True)
 
         # Retrieve embeddings it into bsz x seq_len x embedding_size; including for <pad> tokens
-        embedded_seqs = self.embedding(input_seq)
+        embedded_seqs = self.embedding(input_seq[seq_order_t])
 
         # Goes in as bsz x seq_len x embedding_dim
         # Comes out of this as bsz x seq_len x embedding_dim
-        packed_seqs = rnn_utils.pack_padded_sequence(embedded_seqs, lengths=in_lens, batch_first=True)
+        packed_seqs = rnn_utils.pack_padded_sequence(embedded_seqs, lengths=in_lens[seq_order_t], batch_first=True)
 
         hidden = None # internally sets to 0 vector embeddings
         output_packed, (hidden, _) = self.lstm(packed_seqs, hidden)
 
         if self.return_all:
-            rnn_out, lens = rnn_utils.pad_packed_sequence(output_packed, batch_first=True)
-            return rnn_out, torch.sum(input_seq > 0, dim=-1)
+            rnn_out, _ = rnn_utils.pad_packed_sequence(output_packed, batch_first=True)
+            rnn_out = zip(seq_order, list(rnn_out))
+            rnn_out = list(zip(*sorted(rnn_out)))[1]
+            return torch.stack(rnn_out), in_lens
         # Output is now seq_len x bsz x hidden_dim
         return hidden[-1]
 

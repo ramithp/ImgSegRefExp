@@ -36,7 +36,7 @@ class ResAttnImgSeg(nn.Module):
     def get_mask(self, input_lens):
         #         pdb.set_trace()
         batch_size = input_lens.shape[0]
-        max_inp_len = 20  # torch.max(input_lens).item()
+        max_inp_len = torch.max(input_lens).item()
         #         pdb.set_trace()
         out_mod = torch.arange(max_inp_len).cuda().unsqueeze(0).repeat([batch_size, 1])
         out = out_mod < (max_inp_len - input_lens.unsqueeze(1))
