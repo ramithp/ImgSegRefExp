@@ -7,7 +7,7 @@ import numpy as np
 from model.model_utils import generate_spatial_batch, conv_relu, conv, init_weights
 
 class LanguageModule(nn.Module):
-    def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size):
+    def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size, return_all=False):
         super(LanguageModule, self).__init__()
 
         # TODO: padding index
@@ -21,13 +21,14 @@ class LanguageModule(nn.Module):
                         bidirectional=False, batch_first=True)
 
         init_weights(self.lstm)
+        self.return_all = return_all
 
     def forward(self, input_seq):
         # Incoming is a bsz x seq_len
         # Assumes already padded
         bsz = len(input_seq)
-        max_seq_len = len(input_seq[0])
-        in_lens = [len(seq) for seq in input_seq]
+        in_lens = torch.sum(input_seq > 0, dim=-1) #[len(seq) for seq in input_seq]
+        # max_seq_len = len(input_seq[0])
 
         # Pad to bs x max_seq_len
         padded_seqs = rnn_utils.pad_sequence(input_seq, batch_first=True)
@@ -41,7 +42,10 @@ class LanguageModule(nn.Module):
 
         hidden = None # internally sets to 0 vector embeddings
         output_packed, (hidden, _) = self.lstm(packed_seqs, hidden)
-        
+
+        if self.return_all:
+            rnn_out, lens = rnn_utils.pad_packed_sequence(output_packed, batch_first=True)
+            return rnn_out, lens
         # Output is now seq_len x bsz x hidden_dim
         return hidden[-1]
 
@@ -71,9 +75,9 @@ class ImageModule(nn.Module):
 
 
 class DeconvLayer(nn.Module):
-    def __init__(self, kernel_size, stride, output_dim, bias=False):
+    def __init__(self, kernel_size, stride, output_dim, bias=False, in_channels=1):
         super(DeconvLayer, self).__init__()
-        self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
+        self.dconv = nn.ConvTranspose2d(in_channels=in_channels, out_channels=output_dim, kernel_size=kernel_size,
                                         stride=stride, bias=bias, padding=16)
         
         self.dconv.apply(init_weights)
