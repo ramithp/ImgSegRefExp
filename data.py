@@ -380,8 +380,6 @@ class BERTImageSegmentationDataset(Dataset):
         
         # Get text
         img_text = self.query_dict["{}_{}".format(current_img_main, current_img_crop)][current_img_text]
-        text_seq_val = np.zeros((config.T, config.N), dtype=np.float32)
-        text_seq_val[:, 0] = preprocess_sentence(img_text, self.vocab_dict, config.T)
 
         features = {}
         split = subword_tokenize_to_ids(self.tokenizer, img_text.split(), config.T)

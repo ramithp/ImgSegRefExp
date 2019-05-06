@@ -79,7 +79,21 @@ def main():
     print(model)
 
     # Combine weight decay regularisation with optimiser
-    optimizer = torch.optim.SGD(model.parameters(),lr=config.start_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+    bert_params = list(model.text_features.named_parameters())
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer = torch.optim.Adam(
+    [
+        {'params': [p for n, p in bert_params if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+        {'params': [p for n, p in bert_params if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
+        {"params": model.img_features.res_fc7_full_conv.parameters(), "lr": 3e-4},
+        {"params": model.img_features.res_fc8_full_conv.parameters(), "lr": 3e-4},
+        {"params": model.mlp1.parameters(), "lr": 3e-4},
+        {"params": model.mlp2.parameters(), "lr": 3e-4},
+        {"params": model.deconv.parameters(), "lr": 3e-4},
+    ],
+    lr=5e-5,
+    )
+    #optimizer = torch.optim.SGD(model.parameters(),lr=config.start_lr, momentum=config.momentum, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.lr_decay_step, gamma=config.lr_decay_rate)
     criterion = nn.BCEWithLogitsLoss(reduction="none")
 

@@ -98,7 +98,9 @@ def main():
     print(model)
 
     # Combine weight decay regularisation with optimiser
-    optimizer = torch.optim.SGD(model.parameters(),lr=config.start_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(),lr=1e-4)
+
+    # optimizer = torch.optim.SGD(model.parameters(),lr=config.start_lr, momentum=config.momentum, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.lr_decay_step, gamma=config.lr_decay_rate)
     criterion = nn.BCEWithLogitsLoss(reduction="none")
 
@@ -118,8 +120,8 @@ def main():
 
     for i in range(0, config.n_epochs):
         print("Training for epoch %d" % (i))
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, config.device)
-        test_loss = eval_model(model, val_loader, criterion, config.device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, i, config.device)
+        test_loss = eval_model(model, val_loader, criterion, i, config.device)
 
         print('='*20)
 

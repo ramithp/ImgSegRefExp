@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
 import numpy as np
-from model_utils import generate_spatial_batch, conv_relu, conv, init_weights
+from model.model_utils import generate_spatial_batch, conv_relu, conv, init_weights
 
 class LanguageModule(nn.Module):
     def __init__(self, vocab_size, emb_size, num_lstm_layers, hidden_size, return_all=False):

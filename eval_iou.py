@@ -5,7 +5,8 @@ import numpy as np
 from data import ImageSegmentationDataset, resize_recrop_torch, resize_and_crop
 from torch.utils.data import DataLoader
 from model.baseline import ImgSegRefExpModel
-from model.resnet_exp import ResImgSeg
+from model.resnet_exp import ResImgSeg, ResImgSegDeconved
+from model.resattention import ResAttnImgSeg
 import config
 import torch
 from torch import nn
@@ -99,9 +100,10 @@ def main():
     print("Evaluating IoU")
     # Load model and weights
     # model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
-    model = ResImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    # model = ResImgSegDeconved(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
+    model = ResAttnImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
 
-    pre_trained = torch.load("project_models_model_dict_ep_7_iter_1000.pt")
+    pre_trained = torch.load("project_models_attn_model_ep_1_iter_0.pt")
     model.load_state_dict(pre_trained)
 
     model.to(config.device)

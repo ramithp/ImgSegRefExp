@@ -9,7 +9,7 @@ import torch
 score_thresh = 1e-9
 
 # Model Params
-T = 20
+T = 40
 N = 1
 input_H = 512; featmap_H = (input_H // 32)
 input_W = 512; featmap_W = (input_W // 32)

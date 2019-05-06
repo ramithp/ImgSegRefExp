@@ -112,8 +112,8 @@ def main():
     # model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
     model = BertImgSeg()
 
-    # pre_trained = torch.load("project_models_model_dict_ep_7_iter_1000.pt")
-    # model.load_state_dict(pre_trained)
+    pre_trained = torch.load("project_models_frozen_bert_frozen_ep_1_iter_1000.pt")
+    model.load_state_dict(pre_trained)
 
     model.to(config.device)
     print(model)

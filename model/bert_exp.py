@@ -14,6 +14,10 @@ class BertEmbedder(nn.Module):
     def __init__(self):
         super(BertEmbedder, self).__init__()
         self.bert = BertModel.from_pretrained('bert-base-uncased')
+        self.projection = nn.Linear(768, 1000)
+        for param in self.bert.parameters():
+            param.requires_grad = False
+
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None):
         # Get max length from mask
@@ -28,7 +32,7 @@ class BertEmbedder(nn.Module):
         _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
 
         # Return [CLS] token embedding
-        return pooled_output  
+        return self.projection(pooled_output)
 
 class BertImgSeg(nn.Module):
     def __init__(self):
@@ -37,24 +41,23 @@ class BertImgSeg(nn.Module):
         mlp_hidden=500
         self.text_features = BertEmbedder()
         self.bert_emb_size = 768
-
         self.img_features = ImageModuleResnet()
-        for param in self.img_features.parameters():
-            param.requires_grad = False
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + self.bert_emb_size + 8, out_channels=256)
+        # for param in self.img_features.parameters():
+        #     param.requires_grad = False
+
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + 1000 + 8, out_channels=mlp_hidden)
+        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=16))
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
-        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=mlp_hidden, bias=False, in_channels=256)
-
-        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
+        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False, in_channels=16)
 
     def forward(self, inputs):
         img_input, text_input = inputs
 
         img_out = self.img_features(img_input)
 
-        # Gives [1 x 768] embedding from B E R T!
+        # Gives [1 x 1000] embedding from B E R T!
         bert_ids, bert_mask, bert_token_starts = text_input
         text_out = self.text_features(bert_ids, attention_mask=bert_mask)
 
@@ -69,19 +72,18 @@ class BertImgSeg(nn.Module):
 
         # Generate spatial features to learn co-ordinates
         spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
-
+        
         # Concat 3 sources of inputs
         # Output is of shape N x (D_text + D_img + D_spatial) x H x W
         concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
-                                F.normalize(img_out, p=2, dim=1),
-                                spatial_feats], dim=1)
+                             F.normalize(img_out, p=2, dim=1),
+                             spatial_feats], dim=1)
 
         # Series of linear layers to reduce dimensions
         mlp_out = self.mlp1(concat_out)
-
+        mlp_out = self.mlp2(mlp_out)
+        
         # Final deconvolution to get the upsampled mask
-        deconv_out = self.deconv(mlp_out)
+        generated_mask = self.deconv(mlp_out)
 
-        generated_mask = self.mlp2(deconv_out)
-
-        return F.softmax(generated_mask)
+        return generated_mask 
