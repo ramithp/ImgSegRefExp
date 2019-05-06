@@ -16,6 +16,7 @@ class ImageModuleResnet(nn.Module):
         self.feature_extractor = models.resnet101(pretrained=False)
         if resnet_weights_file:
             self.feature_extractor.load_state_dict(torch.load(resnet_weights_file))
+            print("Loaded weights from resnet weights file")
 
         self.feature_extractor = torch.nn.Sequential(*list(self.feature_extractor.children())[:-2])
 

@@ -16,6 +16,7 @@ import scipy.io as sio
 import skimage.transform
 import numpy as np
 import config
+from pytorch_pretrained_bert import BertTokenizer
 
 '''
 Borrows heavily from
@@ -204,6 +205,41 @@ def crop_masks_subtract_mean(im, masks, crop_size, image_mean):
     imcrop_batch -= image_mean
     return imcrop_batch
 
+############################## BERT UTILS ############################## 
+
+# Borrowed from https://github.com/bheinzerling/dougu/blob/2f54b14d588f17d77b7a8bca9f4e5eb38d6a2805/dougu/bert.py#L98
+# https://github.com/bheinzerling/dougu
+def subword_tokenize(tokenizer, tokens, cls='[CLS]', sep='[SEP]'):
+        flatten = lambda l: [item for sublist in l for item in sublist]
+        subwords = list(map(tokenizer.tokenize, tokens))
+        subword_lengths = list(map(len, subwords))
+        subwords = [cls] + list(flatten(subwords)) + [sep]
+        token_start_idxs = 1 + np.cumsum([0] + subword_lengths[:-1])
+
+        # print(subwords, token_start_idxs)
+        
+        return subwords, token_start_idxs
+
+def convert_tokens_to_ids(tokenizer, tokens, max_len, pad=True):
+        token_ids = tokenizer.convert_tokens_to_ids(tokens)
+        ids = torch.LongTensor([token_ids]).to(device=config.device)
+        if pad:
+            padded_ids = torch.LongTensor(1, max_len).zero_().to(config.device)
+            padded_ids[0, :ids.size(1)] = ids
+            mask = torch.LongTensor(1, max_len).zero_().to(config.device)
+            mask[0, :ids.size(1)] = 1
+            # print(padded_ids, mask)
+            return padded_ids, mask
+        else:
+            return ids
+
+def subword_tokenize_to_ids(tokenizer, tokens, max_len):
+    subwords, token_start_idxs = subword_tokenize(tokenizer, tokens)
+    subword_ids, mask = convert_tokens_to_ids(tokenizer, subwords, max_len)
+    token_starts = torch.zeros(1, max_len).to(subword_ids)
+    # token_starts[0, token_start_idxs] = 1
+    return subword_ids, mask, token_starts
+
 
 ############################## DATASET CLASS(ES) ############################## 
 
@@ -279,3 +315,89 @@ class ImageSegmentationDataset(Dataset):
             return img.size, processed_im, processed_mask, text_seq_val[:, 0] 
                     
         return processed_im, text_seq_val[:, 0]
+
+
+
+class BERTImageSegmentationDataset(Dataset):
+    @staticmethod
+    def load_mask(mask_path):
+        mat = sio.loadmat(mask_path)
+        mask = (mat['segimg_t'] == 0)
+        return mask
+
+    def __init__(self, query_file, root_directory_image, root_directory_mask, test = False, transform = None):
+        
+        self.query_dict = json.load(open(config.query_file))
+        self.bbox_dict = json.load(open(config.bbox_file))
+        self.imcrop_dict = json.load(open(config.imcrop_file))
+        self.imsize_dict = json.load(open(config.imsize_file))
+        self.imlist = list({name.split('_', 1)[0] + '.jpg' for name in self.query_dict})
+        self.vocab_dict = load_vocab_dict_from_file(config.vocab_file)
+
+        self.flat_query_dict = {imname: [] for imname in self.imlist}
+        for imname in self.imlist:
+            this_imcrop_names = self.imcrop_dict[imname]
+            for imcrop_name in this_imcrop_names:
+                gt_bbox = self.bbox_dict[imcrop_name]
+                if imcrop_name not in self.query_dict:
+                    continue
+                this_descriptions = self.query_dict[imcrop_name]
+                for description in this_descriptions:
+                    self.flat_query_dict[imname].append((imcrop_name, gt_bbox, description))
+
+        self.root_directory_image = root_directory_image
+        self.root_directory_mask = root_directory_mask
+        
+        self.query_file = query_file
+        self.query_dict = json.load(open(self.query_file))
+        self.query_keys = []
+        for key in self.query_dict:
+            value_list = self.query_dict[key]
+            for idx,_ in enumerate(value_list):
+                self.query_keys.append("{}_{}".format(key,idx))
+        self.dataset_length = len(self.query_keys)
+        self.test_flag = test
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+
+    def __len__(self):
+        return self.dataset_length
+
+    def __getitem__(self, idx):
+        current_img_name = self.query_keys[idx]
+        current_img_main = int(current_img_name.split("_")[0])
+        current_img_crop = int(current_img_name.split("_")[1])
+        current_img_text = int(current_img_name.split("_")[2])
+        
+        # Get image to pass around
+        img_name = os.path.join(config.image_dir + str(current_img_main) + '.jpg')
+        img = Image.open(img_name)
+        img = img.convert('RGB')
+
+        processed_im = resize_pad_torch(img, config.input_H, config.input_W)
+        
+        # Get text
+        img_text = self.query_dict["{}_{}".format(current_img_main, current_img_crop)][current_img_text]
+        text_seq_val = np.zeros((config.T, config.N), dtype=np.float32)
+        text_seq_val[:, 0] = preprocess_sentence(img_text, self.vocab_dict, config.T)
+
+        features = {}
+        split = subword_tokenize_to_ids(self.tokenizer, img_text.split(), config.T)
+        features["bert_ids"], features["bert_mask"], features["bert_token_starts"] = split
+
+        if (not self.test_flag):
+            mask_file_name = os.path.join(self.root_directory_mask,"{}_{}.mat".format(current_img_main, current_img_crop))
+            mask = torch.Tensor(ImageSegmentationDataset.load_mask(mask_file_name).astype(np.float32))
+            processed_mask = resize_pad_mask(mask, config.input_H, config.input_W)
+            return (img.size, processed_im, processed_mask, features) 
+                    
+        return processed_im, text_seq_val[:, 0]
+
+def collate_fn(featurized_batch):
+    image_sizes = [feat[0] for feat in featurized_batch]
+    processed_ims = torch.stack([feat[1] for feat in featurized_batch])
+    ground_truth_masks = torch.stack([feat[2] for feat in featurized_batch])
+    text_ids = torch.stack([features[3]["bert_ids"] for features in featurized_batch])
+    text_mask = torch.stack([features[3]["bert_mask"] for features in featurized_batch])
+    text_starts = torch.stack([features[3]["bert_token_starts"] for features in featurized_batch])
+
+    return (image_sizes, processed_ims, ground_truth_masks, text_ids.squeeze(1), text_mask.squeeze(1), text_starts.squeeze(1))

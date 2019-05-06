@@ -71,9 +71,9 @@ class ImageModule(nn.Module):
 
 
 class DeconvLayer(nn.Module):
-    def __init__(self, kernel_size, stride, output_dim, bias=False):
+    def __init__(self, kernel_size, stride, output_dim, bias=False, in_channels=1):
         super(DeconvLayer, self).__init__()
-        self.dconv = nn.ConvTranspose2d(in_channels=1, out_channels=output_dim, kernel_size=kernel_size, 
+        self.dconv = nn.ConvTranspose2d(in_channels=in_channels, out_channels=output_dim, kernel_size=kernel_size, 
                                         stride=stride, bias=bias, padding=16)
         
         self.dconv.apply(init_weights)

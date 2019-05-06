@@ -46,6 +46,7 @@ def test_model(model, test_loader, device):
     sent_len_U = defaultdict(lambda: 0)
 
     for batch_idx, (image_sizes, processed_ims, processed_masks, texts) in enumerate(test_loader):
+        # print(texts)
         IoU = 0
         batch_time = time.time()
         with torch.no_grad():
@@ -100,7 +101,7 @@ def main():
     # model = ImgSegRefExpModel(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
     model = ResImgSeg(mlp_hidden=500, vocab_size=8803, emb_size=1000, lstm_hidden_size=1000)
 
-    pre_trained = torch.load("model_dict_ep_cuda_0_iter_1600.pt")
+    pre_trained = torch.load("project_models_model_dict_ep_7_iter_1000.pt")
     model.load_state_dict(pre_trained)
 
     model.to(config.device)
@@ -110,6 +111,7 @@ def main():
     # criterion = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor(int(config.pos_loss_mult),int(config.neg_loss_mult)).to(config.device))
 
     test_dataset = ImageSegmentationDataset(config.custom_test_set, config.image_dir, config.mask_dir)
+    # test_dataset = ImageSegmentationDataset(config.root + 'data/referit_query_test.json', config.image_dir, config.mask_dir)
     test_loader = DataLoader(test_dataset, batch_size=10, shuffle=False)
 
     test_loss = test_model(model, test_loader, config.device)
