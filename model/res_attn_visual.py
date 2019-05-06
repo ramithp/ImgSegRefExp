@@ -17,7 +17,6 @@ class ResAttnImgSeg(nn.Module):
                                             hidden_size=lstm_hidden_size, return_all=True)
 
         self.img_features = ImageModuleResnet(resnet_weights_file=config.resnet_wts_file)
-
         img_feats_channels = 1000
         Cg = 256
         
@@ -33,6 +32,7 @@ class ResAttnImgSeg(nn.Module):
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
 
+        img_feats_channels = 1000
         self.attn_vec_size = 128
         self.attn_key_lin = nn.Linear(img_feats_channels, 128)
         self.attn_queries_lin = nn.Linear(lstm_hidden_size, 128)
@@ -40,7 +40,7 @@ class ResAttnImgSeg(nn.Module):
     def get_mask(self, input_lens):
         #         pdb.set_trace()
         batch_size = input_lens.shape[0]
-        max_inp_len = 20  # torch.max(input_lens).item()
+        max_inp_len = torch.max(input_lens).item()
         #         pdb.set_trace()
         out_mod = torch.arange(max_inp_len).cuda().unsqueeze(0).repeat([batch_size, 1])
         out = out_mod < (max_inp_len - input_lens.unsqueeze(1))
@@ -62,7 +62,7 @@ class ResAttnImgSeg(nn.Module):
         alphas.masked_fill_(mask.unsqueeze(1).unsqueeze(1), -float("inf"))  # fills -inf where mask is 1
         weights_over_text = F.softmax(alphas, dim=-1)  # B x H x W x T
         att_vecs = torch.matmul(weights_over_text, lstm_output.unsqueeze(1))  # B x H x W x hdim
-        return att_vecs, weights_over_text
+        return att_vecs,weights_over_text
 
     def forward(self, inputs):
         img_input, text_input = inputs
@@ -80,11 +80,11 @@ class ResAttnImgSeg(nn.Module):
         # Tile the textual features with the image feature-maps
         # text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)
 
-        text_out, weights_over_text = self.get_attn_vec(text_out, text_lens, img_out.permute(0, 2, 3, 1))
+        text_out,weights_over_text = self.get_attn_vec(text_out, text_lens, img_out.permute(0, 2, 3, 1))
         #         pdb.set_trace()
-        # B x H x W x hdim
-        text_out = text_out.permute( 0, 3, 1, 2)
+        text_out = text_out.permute(0, 3, 1, 2)
 
+        # Generate spatial features to learn co-ordinates
         spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
         visual_context = self.visual_context.forward(torch.cat([F.normalize(img_out, p=2, dim=1),
                                 spatial_feats], dim=1),weights_over_text.permute(0,3,1,2))
