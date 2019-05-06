@@ -27,10 +27,11 @@ class LanguageModule(nn.Module):
         # Incoming is a bsz x seq_len
         # Assumes already padded
         bsz = len(input_seq)
-        max_seq_len = len(input_seq[0])
         # in_lens = [len(seq) for seq in input_seq]
         in_lens = torch.sum(input_seq > 0, dim=-1)
         lens = [len.item() for len in in_lens]
+        max_len = torch.max(in_lens).item()
+        input_seq = input_seq[:, :max_len]
         seq_order = sorted(range(len(lens)), key=lens.__getitem__, reverse=True)
         seq_order_t = input_seq.new_tensor(seq_order)
         #         pdb.set_trace()
