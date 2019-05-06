@@ -4,91 +4,45 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
 import torchvision.models as models
 import numpy as np
+from pytorch_pretrained_bert import BertModel
+from model.resnet_exp import ImageModuleResnet
+from model.baseline import DeconvLayer  
+from model.model_utils import generate_spatial_batch, conv_relu, conv, init_weights
 
-
-class ImageModuleResnet(nn.Module):
-
+#https://github.com/huggingface/pytorch-pretrained-BERT/blob/master/pytorch_pretrained_bert/modeling.py#L1070
+class BertEmbedder(nn.Module):
     def __init__(self):
-        super(ImageModuleResnet, self).__init__()
+        super(BertEmbedder, self).__init__()
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
 
-        # Freeze VGG weights for all layers except FC layers
-        self.feature_extractor = models.resnet101(pretrained=True)
-        self.feature_extractor = torch.nn.Sequential(*list(self.feature_extractor.children())[:-2])
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None):
+        # Get max length from mask
+        max_length, idx = (attention_mask != 0).max(0)        
+        max_length = max_length.nonzero()[-1].item() + 1
+        
+        # S A V E G P U !
+        if max_length < input_ids.shape[1]:
+            input_ids = input_ids[:, :max_length]
+            attention_mask = attention_mask[:, :max_length]
+        
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
 
-        # Padding is 3x3 because after VGG16 layers, we get a 16x16 feature map. k=7 needs 5 to get "SAME" padding
-        res_fc7_full_conv = nn.Sequential(
-            conv_relu(kernel_size=7, stride=1, in_channels=2048, out_channels=4096, padding=(3, 3)),
-            conv_relu(kernel_size=1, stride=1, in_channels=4096, out_channels=4096))
+        # Return [CLS] token embedding
+        return pooled_output  
 
-        # Padding not needed. Just a 1x1
-        res_fc8_full_conv = conv(kernel_size=1, stride=1, in_channels=4096, out_channels=1000)
+class BertImgSeg(nn.Module):
+    def __init__(self):
+        super(BertImgSeg, self).__init__()
 
-        self.feature_extractor.add_module("resnet_fc7_full_conv", res_fc7_full_conv)
-        self.feature_extractor.add_module("resnet_fc8_full_conv", res_fc8_full_conv)
-
-    def forward(self, inputs):
-        x = self.feature_extractor(inputs)
-        print(x.shape)
-        return x
-
-
-class ResImgSeg(nn.Module):
-    def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
-        super(ResImgSeg, self).__init__()
-        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1,
-                                            hidden_size=lstm_hidden_size)
+        mlp_hidden=500
+        self.text_features = BertEmbedder()
+        self.bert_emb_size = 768
 
         self.img_features = ImageModuleResnet()
+        for param in self.img_features.parameters():
+            param.requires_grad = False
 
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=mlp_hidden)
-        self.mlp2 = nn.Sequential(conv(kernel_size=1, stride=1, in_channels=mlp_hidden, out_channels=1))
-
-        # https://pytorch.org/docs/stable/nn.html#convtranspose2d
-        self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=1, bias=False)
-
-    def forward(self, inputs):
-        img_input, text_input = inputs
-
-        img_out = self.img_features(img_input)
-        text_out = self.text_features(text_input)
-
-        # N C H W format
-        featmap_H, featmap_W = img_out.size(2), img_out.size(3)
-        print(featmap_H, featmap_W)
-        # bsz x hidden_dim
-        N, D_text = text_out.size(0), text_out.size(1)
-
-        # Tile the textual features with the image feature-maps
-        text_out = text_out.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, featmap_H, featmap_W)
-
-        # Generate spatial features to learn co-ordinates
-        spatial_feats = generate_spatial_batch(N, featmap_H, featmap_W).permute(0, 3, 1, 2)
-
-        # Concat 3 sources of inputs
-        # Output is of shape N x (D_text + D_img + D_spatial) x H x W
-        concat_out = torch.cat([F.normalize(text_out, p=2, dim=1),
-                                F.normalize(img_out, p=2, dim=1),
-                                spatial_feats], dim=1)
-
-        # Series of linear layers to reduce dimensions
-        mlp_out = self.mlp1(concat_out)
-        mlp_out = self.mlp2(mlp_out)
-
-        # Final deconvolution to get the upsampled mask
-        generated_mask = self.deconv(mlp_out)
-
-        return generated_mask
-
-
-class ResImgSegDeconved(nn.Module):
-    def __init__(self, mlp_hidden, vocab_size, emb_size, lstm_hidden_size):
-        super(ResImgSegDeconved, self).__init__()
-        self.text_features = LanguageModule(vocab_size=vocab_size, emb_size=emb_size, num_lstm_layers=1,
-                                            hidden_size=lstm_hidden_size)
-
-        self.img_features = ImageModuleResnet()
-
-        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + lstm_hidden_size + 8, out_channels=256)
+        self.mlp1 = conv_relu(kernel_size=1, stride=1, in_channels=1000 + self.bert_emb_size + 8, out_channels=256)
 
         # https://pytorch.org/docs/stable/nn.html#convtranspose2d
         self.deconv = DeconvLayer(kernel_size=64, stride=32, output_dim=mlp_hidden, bias=False, in_channels=256)
@@ -99,11 +53,14 @@ class ResImgSegDeconved(nn.Module):
         img_input, text_input = inputs
 
         img_out = self.img_features(img_input)
-        text_out = self.text_features(text_input)
+
+        # Gives [1 x 768] embedding from B E R T!
+        bert_ids, bert_mask, bert_token_starts = text_input
+        text_out = self.text_features(bert_ids, attention_mask=bert_mask)
 
         # N C H W format
         featmap_H, featmap_W = img_out.size(2), img_out.size(3)
-        print(featmap_H, featmap_W)
+
         # bsz x hidden_dim
         N, D_text = text_out.size(0), text_out.size(1)
 
