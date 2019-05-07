@@ -33,6 +33,16 @@ def calc_length_wise_IoUs(sent_len_I, sent_len_U):
     return out
 
 
+def len_to_bucket(len):
+    map = {1:'1', 2:'2-3', 3:'2-3', 4:'4-6', 5:'4-6',6:'4-6'}
+    if len in map:
+        return map[len]
+    elif len >= 7:
+        return '7-20'
+    else:
+        raise NotImplementedError("Length less than 1: " + str(len))
+
+
 def test_model(model, test_loader, device):
     start_time = time.time()
     print("Testing\nNumber of batches: {}\tBatch Size: {}\tDataset size: {}".format(len(test_loader),
@@ -45,6 +55,11 @@ def test_model(model, test_loader, device):
     img_num = 0
     sent_len_I = defaultdict(lambda: 0)
     sent_len_U = defaultdict(lambda: 0)
+
+
+    bucket_sent_len_I = defaultdict(lambda: 0)
+    bucket_sent_len_U = defaultdict(lambda: 0)
+
 
     for batch_idx, (image_sizes, processed_ims, processed_masks, texts) in enumerate(test_loader):
         # print(texts)
@@ -79,6 +94,8 @@ def test_model(model, test_loader, device):
             sum_U += U
             sent_len_I[text_len] += I
             sent_len_U[text_len] += U
+            bucket_sent_len_I[len_to_bucket(text_len)] += I
+            bucket_sent_len_U[len_to_bucket(text_len)] += U
 
             if U == 0:
                 print("Mask sum", mask.sum())
@@ -88,10 +105,12 @@ def test_model(model, test_loader, device):
             print("For image", img_num, "Img I,U:", I, U, " Image IOU:", IoU)
             img_num += 1
 
-        print("Batch IOU:", sum_I, sum_U, sum_I / sum_U, calc_length_wise_IoUs(sent_len_I, sent_len_U))
+        print("Batch IOU:", sum_I, sum_U, sum_I / sum_U, calc_length_wise_IoUs(sent_len_I, sent_len_U), calc_length_wise_IoUs(bucket_sent_len_I, bucket_sent_len_U))
     print("Total IoU:", sum_I, sum_U, sum_I / sum_U)
     print("Length wise IOU:")
     for key, value in sorted(calc_length_wise_IoUs(sent_len_I, sent_len_U).items(), key=lambda x: x[0]):
+        print("{} : {}".format(key, value))
+    for key, value in sorted(calc_length_wise_IoUs(bucket_sent_len_I, bucket_sent_len_U).items(), key=lambda x: x[0]):
         print("{} : {}".format(key, value))
     print("Completed in :", time.time() - start_time)
 
